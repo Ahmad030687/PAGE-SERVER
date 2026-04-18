@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 FB MASTER PRO 2026 - AHMAD ALI EDITION
-Complete Working Tool with Latest API Methods
+Fixed Version with Token Validation & Proper Error Messages
 """
 
 from flask import Flask, request, render_template_string, jsonify
@@ -20,7 +20,6 @@ app = Flask(__name__)
 app.debug = False
 app.secret_key = os.urandom(24)
 
-# Enhanced headers
 headers = {
     'Connection': 'keep-alive',
     'Cache-Control': 'max-age=0',
@@ -29,12 +28,34 @@ headers = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
     'Accept-Encoding': 'gzip, deflate',
     'Accept-Language': 'en-US,en;q=0.9',
-    'referer': 'www.google.com'
 }
 
 stop_events = {}
 threads = {}
 active_tasks = {}
+
+class TokenValidator:
+    @staticmethod
+    def validate_token(access_token):
+        """Check if token is valid and has required permissions"""
+        try:
+            # Check token info
+            url = f"https://graph.facebook.com/me"
+            params = {
+                'access_token': access_token,
+                'fields': 'id,name'
+            }
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return True, data.get('name', 'User')
+            else:
+                error_data = response.json() if response.text else {}
+                error_msg = error_data.get('error', {}).get('message', 'Invalid token')
+                return False, error_msg
+        except Exception as e:
+            return False, str(e)
 
 class TokenExtractor:
     @staticmethod
@@ -149,76 +170,67 @@ class TokenExtractor:
 
 class FacebookMessenger:
     @staticmethod
-    def send_message_v13(access_token, thread_id, message):
-        """Latest working method using v13.0 API"""
+    def send_with_page_token(access_token, thread_id, message):
+        """Method for Page Access Token (EAA...)"""
         try:
-            url = f"https://graph.facebook.com/v13.0/{thread_id}/messages"
+            url = f"https://graph.facebook.com/v17.0/{thread_id}/messages"
             params = {
                 'access_token': access_token,
                 'message': message
             }
             response = requests.post(url, data=params, headers=headers, timeout=10)
-            return response.status_code == 200, response
-        except:
-            return False, None
-    
+            
+            if response.status_code == 200:
+                return True, "Page Token", response
+            else:
+                error_data = response.json() if response.text else {}
+                error_msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+                return False, error_msg, response
+        except Exception as e:
+            return False, str(e), None
+
     @staticmethod
-    def send_message_v15(access_token, thread_id, message):
-        """Alternative v15.0 method"""
+    def send_with_user_token(access_token, thread_id, message):
+        """Method for User Access Token (EAA...)"""
         try:
-            url = f"https://graph.facebook.com/v15.0/{thread_id}/messages"
+            # Using v19.0 which is more stable
+            url = f"https://graph.facebook.com/v19.0/{thread_id}/messages"
             params = {
                 'access_token': access_token,
                 'message': message
             }
             response = requests.post(url, data=params, headers=headers, timeout=10)
-            return response.status_code == 200, response
-        except:
-            return False, None
-    
+            
+            if response.status_code == 200:
+                return True, "User Token", response
+            else:
+                error_data = response.json() if response.text else {}
+                error_msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+                return False, error_msg, response
+        except Exception as e:
+            return False, str(e), None
+
     @staticmethod
-    def send_message_v18(access_token, thread_id, message):
-        """Latest v18.0 method"""
+    def send_legacy_method(access_token, thread_id, message):
+        """Legacy method for older tokens"""
         try:
-            url = f"https://graph.facebook.com/v18.0/{thread_id}/messages"
+            # Try with t_ prefix
+            clean_id = thread_id.replace('t_', '')
+            url = f"https://graph.facebook.com/v15.0/t_{clean_id}"
             params = {
                 'access_token': access_token,
                 'message': message
             }
             response = requests.post(url, data=params, headers=headers, timeout=10)
-            return response.status_code == 200, response
-        except:
-            return False, None
-    
-    @staticmethod
-    def send_message_mbasic(access_token, thread_id, message):
-        """MBasic method - most reliable"""
-        try:
-            sess = requests.Session()
             
-            # First get the form
-            url = f"https://mbasic.facebook.com/messages/read/?tid={thread_id}"
-            cookies = {'c_user': access_token.split('|')[0] if '|' in access_token else ''}
-            
-            # Direct message send
-            data = {
-                'body': message,
-                'send': 'Send',
-                'fb_dtsg': '',
-                'jazoest': ''
-            }
-            
-            headers_mbasic = {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Origin': 'https://mbasic.facebook.com',
-                'Referer': f'https://mbasic.facebook.com/messages/read/?tid={thread_id}'
-            }
-            
-            response = sess.post(url, data=data, headers=headers_mbasic, timeout=15)
-            return response.status_code == 200, response
-        except:
-            return False, None
+            if response.status_code == 200:
+                return True, "Legacy", response
+            else:
+                error_data = response.json() if response.text else {}
+                error_msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+                return False, error_msg, response
+        except Exception as e:
+            return False, str(e), None
 
 def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
     stop_event = stop_events[task_id]
@@ -226,48 +238,88 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
     success_count = 0
     fail_count = 0
     
-    # Clean thread_id - remove t_ prefix if present for some methods
+    # Clean thread_id
     clean_thread_id = thread_id.replace('t_', '') if thread_id.startswith('t_') else thread_id
+    
+    # First validate all tokens
+    valid_tokens = []
+    for token in access_tokens:
+        token = token.strip()
+        if token:
+            is_valid, info = TokenValidator.validate_token(token)
+            if is_valid:
+                valid_tokens.append(token)
+                active_tasks[task_id]['logs'].append({
+                    'time': datetime.now().strftime('%H:%M:%S'),
+                    'status': 'success',
+                    'message': f'✅ Token valid: {info}',
+                    'token': token[:15] + '...'
+                })
+            else:
+                active_tasks[task_id]['logs'].append({
+                    'time': datetime.now().strftime('%H:%M:%S'),
+                    'status': 'error',
+                    'message': f'❌ Invalid token: {info}',
+                    'token': token[:15] + '...'
+                })
+    
+    if not valid_tokens:
+        active_tasks[task_id]['status'] = 'stopped'
+        active_tasks[task_id]['logs'].append({
+            'time': datetime.now().strftime('%H:%M:%S'),
+            'status': 'error',
+            'message': '❌ No valid tokens found!',
+            'token': 'N/A'
+        })
+        return
+    
+    active_tasks[task_id]['valid_tokens'] = len(valid_tokens)
     
     while not stop_event.is_set():
         for message1 in messages:
             if stop_event.is_set():
                 break
                 
-            for access_token in access_tokens:
+            for access_token in valid_tokens:
                 if stop_event.is_set():
                     break
                     
                 try:
-                    access_token = access_token.strip()
-                    if not access_token:
-                        continue
-                    
                     message = f"{mn} {message1}"
                     success = False
                     method_used = ""
+                    error_msg = ""
                     
-                    # Try multiple methods
-                    # Method 1: v13.0
-                    success, response = FacebookMessenger.send_message_v13(access_token, thread_id, message)
+                    # Try different methods based on token type
+                    
+                    # Method 1: Page/User Token v19
+                    success, result, response = FacebookMessenger.send_with_user_token(
+                        access_token, thread_id, message
+                    )
                     if success:
-                        method_used = "v13.0"
+                        method_used = f"v19.0 ({result})"
                     else:
-                        # Method 2: v15.0
-                        success, response = FacebookMessenger.send_message_v15(access_token, thread_id, message)
+                        # Method 2: Page Token v17
+                        success, result, response = FacebookMessenger.send_with_page_token(
+                            access_token, thread_id, message
+                        )
                         if success:
-                            method_used = "v15.0"
+                            method_used = f"v17.0 ({result})"
                         else:
-                            # Method 3: v18.0
-                            success, response = FacebookMessenger.send_message_v18(access_token, thread_id, message)
+                            # Method 3: Legacy method
+                            success, result, response = FacebookMessenger.send_legacy_method(
+                                access_token, clean_thread_id, message
+                            )
                             if success:
-                                method_used = "v18.0"
+                                method_used = f"Legacy ({result})"
+                            else:
+                                error_msg = result
                     
                     message_count += 1
                     
                     if success:
                         success_count += 1
-                        log_msg = f"✅ Sent [{method_used}]: {message[:40]}..."
+                        log_msg = f"✅ Sent [{method_used}]: {message[:30]}..."
                         active_tasks[task_id]['logs'].append({
                             'time': datetime.now().strftime('%H:%M:%S'),
                             'status': 'success',
@@ -276,13 +328,14 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
                         })
                     else:
                         fail_count += 1
-                        error_msg = "Unknown error"
-                        if response:
-                            try:
-                                error_data = response.json()
-                                error_msg = error_data.get('error', {}).get('message', 'Unknown error')
-                            except:
-                                error_msg = f"HTTP {response.status_code}"
+                        
+                        # Parse error for better message
+                        if "permission" in error_msg.lower():
+                            error_msg = "No permission (need pages_messaging)"
+                        elif "expired" in error_msg.lower():
+                            error_msg = "Token expired"
+                        elif "invalid" in error_msg.lower():
+                            error_msg = "Invalid token"
                         
                         log_msg = f"❌ Failed: {error_msg[:40]}"
                         active_tasks[task_id]['logs'].append({
@@ -305,7 +358,6 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
                 active_tasks[task_id]['success_count'] = success_count
                 active_tasks[task_id]['fail_count'] = fail_count
                 
-                # Dynamic interval
                 actual_interval = time_interval + random.uniform(-0.3, 0.7)
                 time.sleep(max(0.5, actual_interval))
     
@@ -326,6 +378,15 @@ def extract_token():
     
     result = TokenExtractor.extract_token(email, password, twofa_code if twofa_code else None)
     return jsonify(result)
+
+@app.route('/validate_token', methods=['POST'])
+def validate_token():
+    token = request.form.get('token', '').strip()
+    if not token:
+        return jsonify({'valid': False, 'message': 'Token required'})
+    
+    is_valid, info = TokenValidator.validate_token(token)
+    return jsonify({'valid': is_valid, 'message': info})
 
 @app.route('/start_messaging', methods=['POST'])
 def start_messaging():
@@ -379,6 +440,7 @@ def start_messaging():
             'message_count': 0,
             'success_count': 0,
             'fail_count': 0,
+            'valid_tokens': 0,
             'logs': [],
             'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'thread_id': thread_id,
@@ -418,7 +480,7 @@ def stop_all_tasks():
 def get_all_tasks():
     return jsonify(active_tasks)
 
-# Premium HTML Template
+# HTML Template - Same premium UI but with added validation
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -753,6 +815,11 @@ HTML_TEMPLATE = '''
             color: var(--dark);
         }
         
+        .btn-success-premium {
+            background: linear-gradient(135deg, var(--success), #69f0ae);
+            color: var(--dark);
+        }
+        
         .live-monitor { margin-top: 30px; }
         
         .monitor-header {
@@ -916,6 +983,25 @@ HTML_TEMPLATE = '''
             animation: slideDown 0.3s ease;
         }
         
+        .token-validation-result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .token-validation-result.valid {
+            background: rgba(0, 200, 83, 0.1);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+        
+        .token-validation-result.invalid {
+            background: rgba(255, 51, 102, 0.1);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+        }
+        
         @keyframes slideDown {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -964,6 +1050,19 @@ HTML_TEMPLATE = '''
         
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+        
+        .info-box {
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid var(--secondary);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .info-box i {
+            color: var(--secondary);
+            margin-right: 10px;
         }
         
         @media (max-width: 768px) {
@@ -1034,6 +1133,12 @@ HTML_TEMPLATE = '''
                     <h3 style="margin-bottom: 20px; color: var(--primary);">
                         <i class="fas fa-shield-alt"></i> Extract Facebook Token
                     </h3>
+                    
+                    <div class="info-box">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Important:</strong> Use account with 2FA enabled for better token lifespan.
+                    </div>
+                    
                     <form id="extractorForm">
                         <div class="form-group">
                             <label class="form-label">
@@ -1057,7 +1162,7 @@ HTML_TEMPLATE = '''
                             <input type="text" class="premium-input" id="twofaCode" name="twofa_code" 
                                    placeholder="Enter 6-digit code" maxlength="6">
                             <small style="color: var(--warning); display: block; margin-top: 8px;">
-                                <i class="fas fa-info-circle"></i> 2FA is enabled. Enter the code sent to your phone/email.
+                                <i class="fas fa-info-circle"></i> Enter the code sent to your phone/email.
                             </small>
                         </div>
                         
@@ -1081,6 +1186,12 @@ HTML_TEMPLATE = '''
                     <h3 style="margin-bottom: 20px; color: var(--primary);">
                         <i class="fas fa-bullhorn"></i> Bulk Message Sender
                     </h3>
+                    
+                    <div class="info-box">
+                        <i class="fas fa-lightbulb"></i>
+                        <strong>Token Requirements:</strong> Token must have <code>pages_messaging</code> permission or be a Page Access Token.
+                    </div>
+                    
                     <form id="messengerForm" enctype="multipart/form-data">
                         <div class="form-group">
                             <label class="form-label">
@@ -1097,7 +1208,11 @@ HTML_TEMPLATE = '''
                                 <i class="fas fa-key"></i> Access Token
                             </label>
                             <input type="text" class="premium-input" id="singleToken" name="singleToken" 
-                                   placeholder="Enter Facebook access token">
+                                   placeholder="Enter Facebook access token (starts with EAA...)">
+                            <button type="button" class="btn-premium btn-success-premium" style="margin-top: 10px; width: 100%;" onclick="validateSingleToken()">
+                                <i class="fas fa-check-circle"></i> Validate Token
+                            </button>
+                            <div id="tokenValidationResult" class="token-validation-result"></div>
                         </div>
                         
                         <div class="form-group" id="tokenFileInput" style="display: none;">
@@ -1120,9 +1235,9 @@ HTML_TEMPLATE = '''
                                 <i class="fas fa-users"></i> Thread/Conversation ID
                             </label>
                             <input type="text" class="premium-input" id="threadId" name="threadId" 
-                                   placeholder="Enter conversation ID (t_xxxxxxxxxxxx)" required>
-                            <small style="color: var(--primary); display: block; margin-top: 5px;">
-                                <i class="fas fa-info-circle"></i> Use format: t_123456789012345 (from message URL)
+                                   placeholder="Enter conversation ID" required>
+                            <small style="color: var(--secondary); display: block; margin-top: 5px;">
+                                <i class="fas fa-info-circle"></i> Format: t_123456789012345 or just 123456789012345
                             </small>
                         </div>
                         
@@ -1150,7 +1265,7 @@ HTML_TEMPLATE = '''
                                 <div class="file-upload-label" id="messagesFileLabel">
                                     <div>
                                         <i class="fas fa-file-upload"></i><br>
-                                        <span id="messagesFileText">Choose TXT file</span>
+                                        <span id="messagesFileText">Choose TXT file with messages (one per line)</span>
                                     </div>
                                 </div>
                                 <input type="file" class="file-upload-input" id="txtFile" name="txtFile" accept=".txt" onchange="handleFileSelect(this, 'messages')" required>
@@ -1273,8 +1388,44 @@ HTML_TEMPLATE = '''
                 label.classList.add('has-file');
                 showAlert(`✅ File selected: ${input.files[0].name}`, 'success');
             } else {
-                textSpan.innerHTML = type === 'token' ? 'Choose Token File' : 'Choose TXT file';
+                textSpan.innerHTML = type === 'token' ? 'Choose Token File' : 'Choose TXT file with messages (one per line)';
                 label.classList.remove('has-file');
+            }
+        }
+        
+        async function validateSingleToken() {
+            const token = document.getElementById('singleToken').value.trim();
+            const resultDiv = document.getElementById('tokenValidationResult');
+            
+            if (!token) {
+                resultDiv.className = 'token-validation-result invalid';
+                resultDiv.innerHTML = '<i class="fas fa-times-circle"></i> Please enter a token';
+                resultDiv.style.display = 'block';
+                return;
+            }
+            
+            resultDiv.className = 'token-validation-result';
+            resultDiv.innerHTML = '<span class="spinner"></span> Validating token...';
+            resultDiv.style.display = 'block';
+            
+            try {
+                const formData = new FormData();
+                formData.append('token', token);
+                const response = await fetch('/validate_token', { method: 'POST', body: formData });
+                const data = await response.json();
+                
+                if (data.valid) {
+                    resultDiv.className = 'token-validation-result valid';
+                    resultDiv.innerHTML = `<i class="fas fa-check-circle"></i> Token Valid! User: ${data.message}`;
+                    showAlert(`✅ Token valid: ${data.message}`, 'success');
+                } else {
+                    resultDiv.className = 'token-validation-result invalid';
+                    resultDiv.innerHTML = `<i class="fas fa-times-circle"></i> Invalid Token: ${data.message}`;
+                    showAlert(`❌ Invalid token: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                resultDiv.className = 'token-validation-result invalid';
+                resultDiv.innerHTML = '<i class="fas fa-times-circle"></i> Validation failed';
             }
         }
         
@@ -1307,6 +1458,9 @@ HTML_TEMPLATE = '''
                     document.getElementById('twofaSection').classList.remove('show');
                     showAlert('✅ Token extracted successfully!', 'success');
                     addConsoleLine('success', '✅ Token extracted successfully');
+                    
+                    // Auto-fill token in messenger tab
+                    document.getElementById('singleToken').value = data.token;
                 } else if (data.requires_2fa) {
                     document.getElementById('twofaSection').classList.add('show');
                     showAlert('⚠️ 2FA Required - Enter the code', 'warning');
@@ -1348,7 +1502,7 @@ HTML_TEMPLATE = '''
                     document.getElementById('tokenFileLabel').classList.remove('has-file');
                     document.getElementById('messagesFileLabel').classList.remove('has-file');
                     document.getElementById('tokenFileText').innerHTML = 'Choose Token File';
-                    document.getElementById('messagesFileText').innerHTML = 'Choose TXT file';
+                    document.getElementById('messagesFileText').innerHTML = 'Choose TXT file with messages (one per line)';
                 } else {
                     showAlert('❌ ' + data.error, 'error');
                     addConsoleLine('error', '❌ Failed: ' + data.error);
@@ -1418,7 +1572,7 @@ HTML_TEMPLATE = '''
                 const statusColor = task.status === 'running' ? 'success' : 'warning';
                 html += `<div class="console-line ${statusColor}" style="padding: 10px 0;">
                     <strong>Task ${id}</strong> - ${task.status}<br>
-                    <small>Sent: ${task.message_count || 0} | Success: ${task.success_count || 0} | Failed: ${task.fail_count || 0}<br>
+                    <small>Valid Tokens: ${task.valid_tokens || 0}/${task.tokens_count || 0} | Sent: ${task.message_count || 0} | Success: ${task.success_count || 0} | Failed: ${task.fail_count || 0}<br>
                     Started: ${task.start_time}</small>
                 </div>`;
                 
@@ -1504,9 +1658,9 @@ if __name__ == '__main__':
     print("\n" + "="*60)
     print("🔥 FB MASTER PRO 2026 - AHMAD ALI EDITION 🔥")
     print("="*60)
-    print("✅ Server: http://0.0.0.0:5000")
-    print("✅ Token Extractor with 2FA Support")
-    print("✅ Multiple API Methods (v13/v15/v18)")
-    print("✅ Auto-fallback on failure")
+    print("✅ Server: http://localhost:5000")
+    print("✅ Token Validation Added")
+    print("✅ Multiple API Methods (v17/v19/Legacy)")
+    print("✅ Better Error Messages")
     print("="*60 + "\n")
     app.run(host='0.0.0.0', port=5000, threaded=True)
