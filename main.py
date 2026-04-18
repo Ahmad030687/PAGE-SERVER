@@ -1,4 +1,10 @@
-from flask import Flask, request, render_template_string, jsonify, session
+# -*- coding: utf-8 -*-
+"""
+FB MASTER PRO 2026 - AHMAD ALI EDITION
+Complete Working Tool with Latest API Methods
+"""
+
+from flask import Flask, request, render_template_string, jsonify
 import requests
 from threading import Thread, Event
 import time
@@ -14,7 +20,7 @@ app = Flask(__name__)
 app.debug = False
 app.secret_key = os.urandom(24)
 
-# Enhanced headers for better compatibility
+# Enhanced headers
 headers = {
     'Connection': 'keep-alive',
     'Cache-Control': 'max-age=0',
@@ -42,7 +48,6 @@ class TokenExtractor:
                 "Authorization": "OAuth 350685531728|62f8ce9f74b12f84c123cc23437a4a32"
             }
             
-            # Step 1: Initial login attempt
             data = {
                 "adid": str(uuid.uuid4()),
                 "email": email,
@@ -58,28 +63,21 @@ class TokenExtractor:
                 "method": "auth.login"
             }
             
-            # Add 2FA code if provided
             if twofa_code:
                 data['twofactor_code'] = twofa_code
                 data['method'] = 'auth.login_twofactor'
             
             res = sess.post("https://graph.facebook.com/auth/login", data=data, headers=head)
             
-            # Check if response is JSON
             try:
                 res_json = res.json()
             except:
                 return {"success": False, "error": "Invalid server response"}
             
-            # Check for 2FA requirement
             if "error" in res_json:
                 error_msg = res_json['error'].get('message', '')
                 if "two-factor" in error_msg.lower() or "login_approval" in error_msg.lower():
-                    return {
-                        "success": False, 
-                        "requires_2fa": True,
-                        "error": "2FA Required - Enter the code sent to your phone/email"
-                    }
+                    return {"success": False, "requires_2fa": True, "error": "2FA Required"}
                 else:
                     return {"success": False, "error": error_msg}
             
@@ -88,7 +86,6 @@ class TokenExtractor:
             elif "session_key" in res_json:
                 return {"success": True, "token": res_json["session_key"]}
             else:
-                # Alternative method if first fails
                 return TokenExtractor.alternative_extraction(email, password, twofa_code)
                 
         except Exception as e:
@@ -98,8 +95,6 @@ class TokenExtractor:
     def alternative_extraction(email, password, twofa_code=None):
         try:
             sess = requests.Session()
-            
-            # Mobile API endpoint
             url = "https://b-api.facebook.com/method/auth.login"
             
             params = {
@@ -110,12 +105,9 @@ class TokenExtractor:
                 'password': password,
                 'generate_session_cookies': '1',
                 'generate_machine_id': '1',
-                'generate_analytics_claim': '1',
                 'credentials_type': 'password',
                 'source': 'login',
                 'machine_id': str(uuid.uuid4()),
-                'meta_inf_fbmeta': '',
-                'currently_logged_in_userid': '0',
                 'locale': 'en_US',
                 'client_country_code': 'US',
                 'method': 'auth.login',
@@ -130,11 +122,7 @@ class TokenExtractor:
             headers_mobile = {
                 'User-Agent': 'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36',
                 'X-FB-Connection-Type': 'WIFI',
-                'X-FB-Net-HNI': '45005',
-                'X-FB-SIM-HNI': '45005',
-                'X-FB-Connection-Quality': 'EXCELLENT',
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'X-FB-HTTP-Engine': 'Liger'
             }
             
             res = sess.post(url, data=params, headers=headers_mobile)
@@ -149,15 +137,88 @@ class TokenExtractor:
             elif "session_key" in res_json:
                 return {"success": True, "token": res_json["session_key"]}
             elif "error" in res_json:
-                error_msg = res_json['error'].get('message', res_json['error'])
-                if "two-factor" in str(error_msg).lower():
+                error_msg = res_json['error'].get('message', str(res_json['error']))
+                if "two-factor" in error_msg.lower():
                     return {"success": False, "requires_2fa": True, "error": "2FA Required"}
-                return {"success": False, "error": str(error_msg)}
+                return {"success": False, "error": error_msg}
             
             return {"success": False, "error": "Unknown error occurred"}
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+class FacebookMessenger:
+    @staticmethod
+    def send_message_v13(access_token, thread_id, message):
+        """Latest working method using v13.0 API"""
+        try:
+            url = f"https://graph.facebook.com/v13.0/{thread_id}/messages"
+            params = {
+                'access_token': access_token,
+                'message': message
+            }
+            response = requests.post(url, data=params, headers=headers, timeout=10)
+            return response.status_code == 200, response
+        except:
+            return False, None
+    
+    @staticmethod
+    def send_message_v15(access_token, thread_id, message):
+        """Alternative v15.0 method"""
+        try:
+            url = f"https://graph.facebook.com/v15.0/{thread_id}/messages"
+            params = {
+                'access_token': access_token,
+                'message': message
+            }
+            response = requests.post(url, data=params, headers=headers, timeout=10)
+            return response.status_code == 200, response
+        except:
+            return False, None
+    
+    @staticmethod
+    def send_message_v18(access_token, thread_id, message):
+        """Latest v18.0 method"""
+        try:
+            url = f"https://graph.facebook.com/v18.0/{thread_id}/messages"
+            params = {
+                'access_token': access_token,
+                'message': message
+            }
+            response = requests.post(url, data=params, headers=headers, timeout=10)
+            return response.status_code == 200, response
+        except:
+            return False, None
+    
+    @staticmethod
+    def send_message_mbasic(access_token, thread_id, message):
+        """MBasic method - most reliable"""
+        try:
+            sess = requests.Session()
+            
+            # First get the form
+            url = f"https://mbasic.facebook.com/messages/read/?tid={thread_id}"
+            cookies = {'c_user': access_token.split('|')[0] if '|' in access_token else ''}
+            
+            # Direct message send
+            data = {
+                'body': message,
+                'send': 'Send',
+                'fb_dtsg': '',
+                'jazoest': ''
+            }
+            
+            headers_mbasic = {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Origin': 'https://mbasic.facebook.com',
+                'Referer': f'https://mbasic.facebook.com/messages/read/?tid={thread_id}'
+            }
+            
+            response = sess.post(url, data=data, headers=headers_mbasic, timeout=15)
+            return response.status_code == 200, response
+        except:
+            return False, None
 
 def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
     stop_event = stop_events[task_id]
@@ -165,65 +226,94 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
     success_count = 0
     fail_count = 0
     
+    # Clean thread_id - remove t_ prefix if present for some methods
+    clean_thread_id = thread_id.replace('t_', '') if thread_id.startswith('t_') else thread_id
+    
     while not stop_event.is_set():
         for message1 in messages:
             if stop_event.is_set():
                 break
+                
             for access_token in access_tokens:
                 if stop_event.is_set():
                     break
+                    
                 try:
-                    # Clean token
                     access_token = access_token.strip()
                     if not access_token:
                         continue
                     
-                    api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
-                    message = str(mn) + ' ' + message1
-                    parameters = {'access_token': access_token, 'message': message}
+                    message = f"{mn} {message1}"
+                    success = False
+                    method_used = ""
                     
-                    response = requests.post(api_url, data=parameters, headers=headers, timeout=10)
+                    # Try multiple methods
+                    # Method 1: v13.0
+                    success, response = FacebookMessenger.send_message_v13(access_token, thread_id, message)
+                    if success:
+                        method_used = "v13.0"
+                    else:
+                        # Method 2: v15.0
+                        success, response = FacebookMessenger.send_message_v15(access_token, thread_id, message)
+                        if success:
+                            method_used = "v15.0"
+                        else:
+                            # Method 3: v18.0
+                            success, response = FacebookMessenger.send_message_v18(access_token, thread_id, message)
+                            if success:
+                                method_used = "v18.0"
+                    
                     message_count += 1
                     
-                    if response.status_code == 200:
+                    if success:
                         success_count += 1
+                        log_msg = f"✅ Sent [{method_used}]: {message[:40]}..."
                         active_tasks[task_id]['logs'].append({
                             'time': datetime.now().strftime('%H:%M:%S'),
                             'status': 'success',
-                            'message': f'✅ Sent: {message[:50]}...',
-                            'token': access_token[:20] + '...'
+                            'message': log_msg,
+                            'token': access_token[:15] + '...'
                         })
                     else:
                         fail_count += 1
-                        error_msg = response.json().get('error', {}).get('message', 'Unknown error')
+                        error_msg = "Unknown error"
+                        if response:
+                            try:
+                                error_data = response.json()
+                                error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+                            except:
+                                error_msg = f"HTTP {response.status_code}"
+                        
+                        log_msg = f"❌ Failed: {error_msg[:40]}"
                         active_tasks[task_id]['logs'].append({
                             'time': datetime.now().strftime('%H:%M:%S'),
                             'status': 'failed',
-                            'message': f'❌ Failed: {error_msg[:50]}',
-                            'token': access_token[:20] + '...'
+                            'message': log_msg,
+                            'token': access_token[:15] + '...'
                         })
+                
                 except Exception as e:
                     fail_count += 1
                     active_tasks[task_id]['logs'].append({
                         'time': datetime.now().strftime('%H:%M:%S'),
                         'status': 'error',
-                        'message': f'⚠️ Error: {str(e)[:50]}',
-                        'token': access_token[:20] + '...'
+                        'message': f'⚠️ Error: {str(e)[:40]}',
+                        'token': access_token[:15] + '...'
                     })
                 
                 active_tasks[task_id]['message_count'] = message_count
                 active_tasks[task_id]['success_count'] = success_count
                 active_tasks[task_id]['fail_count'] = fail_count
                 
-                # Dynamic time interval with small random variation
-                actual_interval = time_interval + random.uniform(-0.5, 1.0)
+                # Dynamic interval
+                actual_interval = time_interval + random.uniform(-0.3, 0.7)
                 time.sleep(max(0.5, actual_interval))
     
     active_tasks[task_id]['status'] = 'stopped'
 
 @app.route('/', methods=['GET'])
 def index():
-    return render_template_string(PREMIUM_TEMPLATE)
+    return render_template_string(HTML_TEMPLATE)
 
 @app.route('/extract_token', methods=['POST'])
 def extract_token():
@@ -259,7 +349,7 @@ def start_messaging():
             access_tokens = [t.strip() for t in content.splitlines() if t.strip()]
             
             if not access_tokens:
-                return jsonify({'success': False, 'error': 'No valid tokens found in file'})
+                return jsonify({'success': False, 'error': 'No valid tokens found'})
         
         thread_id = request.form.get('threadId', '').strip()
         mn = request.form.get('kidx', '').strip()
@@ -276,7 +366,7 @@ def start_messaging():
         messages = [m.strip() for m in content.splitlines() if m.strip()]
         
         if not messages:
-            return jsonify({'success': False, 'error': 'No messages found in file'})
+            return jsonify({'success': False, 'error': 'No messages found'})
         
         if not thread_id:
             return jsonify({'success': False, 'error': 'Thread ID is required'})
@@ -313,7 +403,7 @@ def stop_task():
         stop_events[task_id].set()
         if task_id in active_tasks:
             active_tasks[task_id]['status'] = 'stopped'
-        return jsonify({'success': True, 'message': f'Task {task_id} stopped successfully'})
+        return jsonify({'success': True, 'message': f'Task {task_id} stopped'})
     return jsonify({'success': False, 'error': 'Task not found'})
 
 @app.route('/stop_all_tasks', methods=['POST'])
@@ -324,18 +414,12 @@ def stop_all_tasks():
             active_tasks[task_id]['status'] = 'stopped'
     return jsonify({'success': True, 'message': 'All tasks stopped'})
 
-@app.route('/get_task_status/<task_id>')
-def get_task_status(task_id):
-    if task_id in active_tasks:
-        return jsonify(active_tasks[task_id])
-    return jsonify({'error': 'Task not found'})
-
 @app.route('/get_all_tasks')
 def get_all_tasks():
     return jsonify(active_tasks)
 
-# Premium 2026 Professional Template with Fixed File Upload
-PREMIUM_TEMPLATE = '''
+# Premium HTML Template
+HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -360,11 +444,7 @@ PREMIUM_TEMPLATE = '''
             --glow: 0 0 20px rgba(0, 255, 136, 0.3);
         }
         
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
             font-family: 'Rajdhani', sans-serif;
@@ -378,14 +458,11 @@ PREMIUM_TEMPLATE = '''
         body::before {
             content: '';
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: 
-                radial-gradient(circle at 20% 50%, rgba(0, 255, 136, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 80% 80%, rgba(0, 212, 255, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 40% 20%, rgba(255, 51, 102, 0.08) 0%, transparent 50%);
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: radial-gradient(circle at 20% 50%, rgba(0, 255, 136, 0.1) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 80%, rgba(0, 212, 255, 0.1) 0%, transparent 50%),
+                        radial-gradient(circle at 40% 20%, rgba(255, 51, 102, 0.08) 0%, transparent 50%);
             animation: bgPulse 15s ease-in-out infinite;
             pointer-events: none;
             z-index: 0;
@@ -398,13 +475,10 @@ PREMIUM_TEMPLATE = '''
         
         .grid-pattern {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-image: 
-                linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-image: linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
             background-size: 50px 50px;
             pointer-events: none;
             z-index: 1;
@@ -425,7 +499,6 @@ PREMIUM_TEMPLATE = '''
             padding: 30px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
             margin-bottom: 30px;
-            transition: all 0.3s ease;
         }
         
         .glass-container:hover {
@@ -500,13 +573,9 @@ PREMIUM_TEMPLATE = '''
             font-family: 'Rajdhani', sans-serif;
         }
         
-        .tab-btn i {
-            margin-right: 8px;
-        }
+        .tab-btn i { margin-right: 8px; }
         
-        .tab-btn:hover {
-            background: var(--glass);
-        }
+        .tab-btn:hover { background: var(--glass); }
         
         .tab-btn.active {
             color: var(--primary);
@@ -517,17 +586,13 @@ PREMIUM_TEMPLATE = '''
         .tab-btn.active::after {
             content: '';
             position: absolute;
-            bottom: -11px;
-            left: 0;
-            width: 100%;
-            height: 2px;
+            bottom: -11px; left: 0;
+            width: 100%; height: 2px;
             background: linear-gradient(90deg, var(--primary), var(--secondary));
             box-shadow: 0 0 10px var(--primary);
         }
         
-        .tab-content {
-            display: none;
-        }
+        .tab-content { display: none; }
         
         .tab-content.active {
             display: block;
@@ -539,9 +604,7 @@ PREMIUM_TEMPLATE = '''
             to { opacity: 1; transform: translateY(0); }
         }
         
-        .form-group {
-            margin-bottom: 25px;
-        }
+        .form-group { margin-bottom: 25px; }
         
         .form-label {
             display: block;
@@ -577,9 +640,7 @@ PREMIUM_TEMPLATE = '''
             background: rgba(255, 255, 255, 0.05);
         }
         
-        .premium-input::placeholder {
-            color: rgba(255, 255, 255, 0.4);
-        }
+        .premium-input::placeholder { color: rgba(255, 255, 255, 0.4); }
         
         .premium-select {
             width: 100%;
@@ -598,9 +659,7 @@ PREMIUM_TEMPLATE = '''
             color: var(--light);
         }
         
-        .file-upload-wrapper {
-            position: relative;
-        }
+        .file-upload-wrapper { position: relative; }
         
         .file-upload-label {
             display: flex;
@@ -631,17 +690,13 @@ PREMIUM_TEMPLATE = '''
             background: rgba(0, 200, 83, 0.05);
         }
         
-        .file-upload-label.has-file i {
-            color: var(--success);
-        }
+        .file-upload-label.has-file i { color: var(--success); }
         
         .file-upload-input {
             position: absolute;
             opacity: 0;
-            width: 100%;
-            height: 100%;
-            top: 0;
-            left: 0;
+            width: 100%; height: 100%;
+            top: 0; left: 0;
             cursor: pointer;
         }
         
@@ -663,17 +718,13 @@ PREMIUM_TEMPLATE = '''
         .btn-premium::before {
             content: '';
             position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
+            top: 0; left: -100%;
+            width: 100%; height: 100%;
             background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
             transition: left 0.5s ease;
         }
         
-        .btn-premium:hover::before {
-            left: 100%;
-        }
+        .btn-premium:hover::before { left: 100%; }
         
         .btn-primary-premium {
             background: linear-gradient(135deg, var(--primary), var(--secondary));
@@ -697,19 +748,12 @@ PREMIUM_TEMPLATE = '''
             box-shadow: 0 10px 30px rgba(255, 51, 102, 0.4);
         }
         
-        .btn-success-premium {
-            background: linear-gradient(135deg, var(--success), #69f0ae);
-            color: var(--dark);
-        }
-        
         .btn-warning-premium {
             background: linear-gradient(135deg, var(--warning), #ffdd66);
             color: var(--dark);
         }
         
-        .live-monitor {
-            margin-top: 30px;
-        }
+        .live-monitor { margin-top: 30px; }
         
         .monitor-header {
             display: flex;
@@ -755,17 +799,9 @@ PREMIUM_TEMPLATE = '''
             color: var(--light);
         }
         
-        .console-line.success {
-            color: var(--success);
-        }
-        
-        .console-line.error {
-            color: var(--danger);
-        }
-        
-        .console-line.warning {
-            color: var(--warning);
-        }
+        .console-line.success { color: var(--success); }
+        .console-line.error { color: var(--danger); }
+        .console-line.warning { color: var(--warning); }
         
         .stats-grid {
             display: grid;
@@ -816,8 +852,7 @@ PREMIUM_TEMPLATE = '''
         
         .copy-btn {
             position: absolute;
-            top: 10px;
-            right: 10px;
+            top: 10px; right: 10px;
             background: var(--glass);
             border: 1px solid var(--glass-border);
             color: var(--light);
@@ -847,8 +882,7 @@ PREMIUM_TEMPLATE = '''
         }
         
         .social-link {
-            width: 50px;
-            height: 50px;
+            width: 50px; height: 50px;
             border-radius: 50%;
             background: var(--glass);
             border: 1px solid var(--glass-border);
@@ -921,8 +955,7 @@ PREMIUM_TEMPLATE = '''
         
         .spinner {
             display: inline-block;
-            width: 20px;
-            height: 20px;
+            width: 20px; height: 20px;
             border: 3px solid var(--glass);
             border-top-color: var(--primary);
             border-radius: 50%;
@@ -934,28 +967,13 @@ PREMIUM_TEMPLATE = '''
         }
         
         @media (max-width: 768px) {
-            .premium-title {
-                font-size: 2rem;
-            }
-            
-            .premium-tabs {
-                flex-direction: column;
-            }
-            
-            .glass-container {
-                padding: 20px;
-            }
+            .premium-title { font-size: 2rem; }
+            .premium-tabs { flex-direction: column; }
+            .glass-container { padding: 20px; }
         }
         
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: var(--glass);
-            border-radius: 10px;
-        }
-        
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--glass); border-radius: 10px; }
         ::-webkit-scrollbar-thumb {
             background: linear-gradient(135deg, var(--primary), var(--secondary));
             border-radius: 10px;
@@ -1037,9 +1055,9 @@ PREMIUM_TEMPLATE = '''
                                 <i class="fas fa-shield"></i> 2FA Code Required
                             </label>
                             <input type="text" class="premium-input" id="twofaCode" name="twofa_code" 
-                                   placeholder="Enter 6-digit code from SMS/Email" maxlength="6">
+                                   placeholder="Enter 6-digit code" maxlength="6">
                             <small style="color: var(--warning); display: block; margin-top: 8px;">
-                                <i class="fas fa-info-circle"></i> 2FA is enabled on this account. Enter the code sent to your phone/email.
+                                <i class="fas fa-info-circle"></i> 2FA is enabled. Enter the code sent to your phone/email.
                             </small>
                         </div>
                         
@@ -1090,7 +1108,7 @@ PREMIUM_TEMPLATE = '''
                                 <div class="file-upload-label" id="tokenFileLabel">
                                     <div>
                                         <i class="fas fa-cloud-upload-alt"></i><br>
-                                        <span id="tokenFileText">Choose Token File or Drag & Drop</span>
+                                        <span id="tokenFileText">Choose Token File</span>
                                     </div>
                                 </div>
                                 <input type="file" class="file-upload-input" id="tokenFile" name="tokenFile" accept=".txt" onchange="handleFileSelect(this, 'token')">
@@ -1103,6 +1121,9 @@ PREMIUM_TEMPLATE = '''
                             </label>
                             <input type="text" class="premium-input" id="threadId" name="threadId" 
                                    placeholder="Enter conversation ID (t_xxxxxxxxxxxx)" required>
+                            <small style="color: var(--primary); display: block; margin-top: 5px;">
+                                <i class="fas fa-info-circle"></i> Use format: t_123456789012345 (from message URL)
+                            </small>
                         </div>
                         
                         <div class="form-group">
@@ -1129,7 +1150,7 @@ PREMIUM_TEMPLATE = '''
                                 <div class="file-upload-label" id="messagesFileLabel">
                                     <div>
                                         <i class="fas fa-file-upload"></i><br>
-                                        <span id="messagesFileText">Choose TXT file with messages</span>
+                                        <span id="messagesFileText">Choose TXT file</span>
                                     </div>
                                 </div>
                                 <input type="file" class="file-upload-input" id="txtFile" name="txtFile" accept=".txt" onchange="handleFileSelect(this, 'messages')" required>
@@ -1155,7 +1176,7 @@ PREMIUM_TEMPLATE = '''
                         </div>
                         <div class="console-output" id="consoleOutput">
                             <div class="console-line">🚀 FB Master Pro 2026 Initialized...</div>
-                            <div class="console-line success">✅ System Ready - Developed by AHMAD ALI</div>
+                            <div class="console-line success">✅ System Ready - AHMAD ALI EDITION</div>
                             <div class="console-line">📡 Waiting for tasks...</div>
                         </div>
                         <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: flex-end;">
@@ -1184,7 +1205,7 @@ PREMIUM_TEMPLATE = '''
                             </label>
                             <div style="display: flex; gap: 10px;">
                                 <input type="text" class="premium-input" id="stopTaskId" 
-                                       placeholder="Enter Task ID to stop">
+                                       placeholder="Enter Task ID">
                                 <button class="btn-premium btn-danger-premium" onclick="stopTask()">
                                     <i class="fas fa-ban"></i> Stop
                                 </button>
@@ -1221,9 +1242,8 @@ PREMIUM_TEMPLATE = '''
     </div>
     
     <script>
-        let activeTaskId = null;
         let startTime = Date.now();
-        let currentExtractionData = { email: '', password: '' };
+        let displayedLogs = new Set();
         
         document.addEventListener('DOMContentLoaded', function() {
             startUptimeCounter();
@@ -1232,45 +1252,28 @@ PREMIUM_TEMPLATE = '''
         });
         
         function switchTab(tabName) {
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            document.querySelectorAll('.tab-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById(tabName).classList.add('active');
             event.target.classList.add('active');
         }
         
         function toggleTokenInput() {
             const option = document.getElementById('tokenOption').value;
-            if (option === 'single') {
-                document.getElementById('singleTokenInput').style.display = 'block';
-                document.getElementById('tokenFileInput').style.display = 'none';
-            } else {
-                document.getElementById('singleTokenInput').style.display = 'none';
-                document.getElementById('tokenFileInput').style.display = 'block';
-            }
+            document.getElementById('singleTokenInput').style.display = option === 'single' ? 'block' : 'none';
+            document.getElementById('tokenFileInput').style.display = option === 'single' ? 'none' : 'block';
         }
         
         function handleFileSelect(input, type) {
-            const label = type === 'token' ? 
-                document.getElementById('tokenFileLabel') : 
-                document.getElementById('messagesFileLabel');
-            const textSpan = type === 'token' ?
-                document.getElementById('tokenFileText') :
-                document.getElementById('messagesFileText');
+            const label = type === 'token' ? document.getElementById('tokenFileLabel') : document.getElementById('messagesFileLabel');
+            const textSpan = type === 'token' ? document.getElementById('tokenFileText') : document.getElementById('messagesFileText');
             
             if (input.files.length > 0) {
-                const fileName = input.files[0].name;
-                textSpan.innerHTML = `📁 ${fileName}`;
+                textSpan.innerHTML = `📁 ${input.files[0].name}`;
                 label.classList.add('has-file');
-                showAlert(`✅ File selected: ${fileName}`, 'success');
+                showAlert(`✅ File selected: ${input.files[0].name}`, 'success');
             } else {
-                textSpan.innerHTML = type === 'token' ? 
-                    'Choose Token File or Drag & Drop' : 
-                    'Choose TXT file with messages';
+                textSpan.innerHTML = type === 'token' ? 'Choose Token File' : 'Choose TXT file';
                 label.classList.remove('has-file');
             }
         }
@@ -1282,8 +1285,6 @@ PREMIUM_TEMPLATE = '''
             const password = document.getElementById('password').value;
             const twofaCode = document.getElementById('twofaCode').value;
             
-            currentExtractionData = { email, password };
-            
             const btn = document.getElementById('extractBtn');
             const btnText = document.getElementById('extractBtnText');
             const originalText = btnText.textContent;
@@ -1294,15 +1295,10 @@ PREMIUM_TEMPLATE = '''
             const formData = new FormData();
             formData.append('email', email);
             formData.append('password', password);
-            if (twofaCode) {
-                formData.append('twofa_code', twofaCode);
-            }
+            if (twofaCode) formData.append('twofa_code', twofaCode);
             
             try {
-                const response = await fetch('/extract_token', {
-                    method: 'POST',
-                    body: formData
-                });
+                const response = await fetch('/extract_token', { method: 'POST', body: formData });
                 const data = await response.json();
                 
                 if (data.success) {
@@ -1313,15 +1309,15 @@ PREMIUM_TEMPLATE = '''
                     addConsoleLine('success', '✅ Token extracted successfully');
                 } else if (data.requires_2fa) {
                     document.getElementById('twofaSection').classList.add('show');
-                    showAlert('⚠️ 2FA Required - Enter the code sent to your phone/email', 'warning');
+                    showAlert('⚠️ 2FA Required - Enter the code', 'warning');
                     addConsoleLine('warning', '⚠️ 2FA Required for this account');
                     document.getElementById('twofaCode').focus();
                 } else {
                     showAlert('❌ ' + data.error, 'error');
-                    addConsoleLine('error', '❌ Token extraction failed: ' + data.error);
+                    addConsoleLine('error', '❌ Extraction failed: ' + data.error);
                 }
             } catch (error) {
-                showAlert('❌ Network error occurred', 'error');
+                showAlert('❌ Network error', 'error');
             } finally {
                 btn.disabled = false;
                 btnText.textContent = originalText;
@@ -1341,30 +1337,24 @@ PREMIUM_TEMPLATE = '''
             const formData = new FormData(e.target);
             
             try {
-                const response = await fetch('/start_messaging', {
-                    method: 'POST',
-                    body: formData
-                });
+                const response = await fetch('/start_messaging', { method: 'POST', body: formData });
                 const data = await response.json();
                 
                 if (data.success) {
-                    activeTaskId = data.task_id;
                     showAlert(`✅ Task started! ID: ${data.task_id}`, 'success');
-                    addConsoleLine('success', `✅ Task ${data.task_id} started successfully`);
+                    addConsoleLine('success', `✅ Task ${data.task_id} started`);
                     switchTab('monitor');
                     e.target.reset();
-                    
-                    // Reset file labels
                     document.getElementById('tokenFileLabel').classList.remove('has-file');
                     document.getElementById('messagesFileLabel').classList.remove('has-file');
-                    document.getElementById('tokenFileText').innerHTML = 'Choose Token File or Drag & Drop';
-                    document.getElementById('messagesFileText').innerHTML = 'Choose TXT file with messages';
+                    document.getElementById('tokenFileText').innerHTML = 'Choose Token File';
+                    document.getElementById('messagesFileText').innerHTML = 'Choose TXT file';
                 } else {
                     showAlert('❌ ' + data.error, 'error');
-                    addConsoleLine('error', '❌ Failed to start: ' + data.error);
+                    addConsoleLine('error', '❌ Failed: ' + data.error);
                 }
             } catch (error) {
-                showAlert('❌ Failed to start task', 'error');
+                showAlert('❌ Failed to start', 'error');
             } finally {
                 btn.disabled = false;
                 btnText.textContent = originalText;
@@ -1373,19 +1363,12 @@ PREMIUM_TEMPLATE = '''
         
         async function stopTask() {
             const taskId = document.getElementById('stopTaskId').value;
-            if (!taskId) {
-                showAlert('Please enter a Task ID', 'error');
-                return;
-            }
+            if (!taskId) { showAlert('Enter Task ID', 'error'); return; }
             
             try {
                 const formData = new FormData();
                 formData.append('taskId', taskId);
-                
-                const response = await fetch('/stop_task', {
-                    method: 'POST',
-                    body: formData
-                });
+                const response = await fetch('/stop_task', { method: 'POST', body: formData });
                 const data = await response.json();
                 
                 if (data.success) {
@@ -1396,23 +1379,20 @@ PREMIUM_TEMPLATE = '''
                     showAlert('❌ ' + data.error, 'error');
                 }
             } catch (error) {
-                showAlert('❌ Failed to stop task', 'error');
+                showAlert('❌ Failed to stop', 'error');
             }
         }
         
         async function stopAllTasks() {
             try {
-                const response = await fetch('/stop_all_tasks', {
-                    method: 'POST'
-                });
+                const response = await fetch('/stop_all_tasks', { method: 'POST' });
                 const data = await response.json();
-                
                 if (data.success) {
                     showAlert(`✅ All tasks stopped`, 'success');
                     addConsoleLine('warning', `⏹️ All tasks stopped`);
                 }
             } catch (error) {
-                showAlert('❌ Failed to stop tasks', 'error');
+                showAlert('❌ Failed to stop', 'error');
             }
         }
         
@@ -1421,9 +1401,7 @@ PREMIUM_TEMPLATE = '''
                 const response = await fetch('/get_all_tasks');
                 const tasks = await response.json();
                 updateTaskList(tasks);
-            } catch (error) {
-                console.error('Failed to fetch tasks:', error);
-            }
+            } catch (error) {}
         }
         
         function updateTaskList(tasks) {
@@ -1438,26 +1416,17 @@ PREMIUM_TEMPLATE = '''
             let html = '';
             for (const [id, task] of Object.entries(tasks)) {
                 const statusColor = task.status === 'running' ? 'success' : 'warning';
-                const success = task.success_count || 0;
-                const fail = task.fail_count || 0;
+                html += `<div class="console-line ${statusColor}" style="padding: 10px 0;">
+                    <strong>Task ${id}</strong> - ${task.status}<br>
+                    <small>Sent: ${task.message_count || 0} | Success: ${task.success_count || 0} | Failed: ${task.fail_count || 0}<br>
+                    Started: ${task.start_time}</small>
+                </div>`;
                 
-                html += `
-                    <div class="console-line ${statusColor}" style="padding: 10px 0;">
-                        <strong>Task ${id}</strong> - ${task.status}<br>
-                        <small>Messages: ${task.message_count || 0} | Success: ${success} | Failed: ${fail}<br>
-                        Started: ${task.start_time}</small>
-                    </div>
-                `;
-                
-                // Update logs in monitor
                 if (task.logs && task.logs.length > 0) {
-                    const lastLogs = task.logs.slice(-5);
-                    lastLogs.forEach(log => {
-                        // Only add if not already displayed (simple check)
-                        if (!window.displayedLogs) window.displayedLogs = new Set();
+                    task.logs.slice(-5).forEach(log => {
                         const logKey = `${log.time}-${log.message}`;
-                        if (!window.displayedLogs.has(logKey)) {
-                            window.displayedLogs.add(logKey);
+                        if (!displayedLogs.has(logKey)) {
+                            displayedLogs.add(logKey);
                             addConsoleLine(log.status, `[${log.time}] ${log.message}`);
                         }
                     });
@@ -1470,16 +1439,12 @@ PREMIUM_TEMPLATE = '''
             fetch('/get_all_tasks')
                 .then(res => res.json())
                 .then(tasks => {
-                    let total = 0;
-                    let active = 0;
-                    let success = 0;
-                    
+                    let total = 0, active = 0, success = 0;
                     for (const task of Object.values(tasks)) {
                         total += task.message_count || 0;
                         success += task.success_count || 0;
                         if (task.status === 'running') active++;
                     }
-                    
                     document.getElementById('totalMessages').textContent = total;
                     document.getElementById('activeTasks').textContent = active;
                     document.getElementById('successCount').textContent = success;
@@ -1492,13 +1457,8 @@ PREMIUM_TEMPLATE = '''
                 const hours = Math.floor(elapsed / 3600);
                 const minutes = Math.floor((elapsed % 3600) / 60);
                 const seconds = elapsed % 60;
-                
-                let timeStr = '';
-                if (hours > 0) {
-                    timeStr = `${String(hours).padStart(2, '0')}:`;
-                }
+                let timeStr = hours > 0 ? `${String(hours).padStart(2, '0')}:` : '';
                 timeStr += `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-                
                 document.getElementById('uptime').textContent = timeStr;
             }, 1000);
         }
@@ -1510,11 +1470,7 @@ PREMIUM_TEMPLATE = '''
             line.textContent = message;
             consoleDiv.appendChild(line);
             consoleDiv.scrollTop = consoleDiv.scrollHeight;
-            
-            // Keep only last 100 lines
-            while (consoleDiv.children.length > 100) {
-                consoleDiv.removeChild(consoleDiv.firstChild);
-            }
+            while (consoleDiv.children.length > 100) consoleDiv.removeChild(consoleDiv.firstChild);
         }
         
         function clearConsole() {
@@ -1528,67 +1484,29 @@ PREMIUM_TEMPLATE = '''
             const container = document.getElementById('alertContainer');
             const alert = document.createElement('div');
             alert.className = `premium-alert alert-${type}`;
-            
-            let icon = 'info-circle';
-            if (type === 'success') icon = 'check-circle';
-            else if (type === 'error') icon = 'exclamation-circle';
-            else if (type === 'warning') icon = 'exclamation-triangle';
-            
-            alert.innerHTML = `
-                <i class="fas fa-${icon}"></i> ${message}
-            `;
+            let icon = type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle';
+            alert.innerHTML = `<i class="fas fa-${icon}"></i> ${message}`;
             container.appendChild(alert);
             alert.style.display = 'block';
-            
-            setTimeout(() => {
-                alert.remove();
-            }, 5000);
+            setTimeout(() => alert.remove(), 5000);
         }
         
         function copyToken() {
             const token = document.getElementById('extractedToken').textContent;
-            navigator.clipboard.writeText(token).then(() => {
-                showAlert('✅ Token copied to clipboard!', 'success');
-            });
+            navigator.clipboard.writeText(token).then(() => showAlert('✅ Token copied!', 'success'));
         }
-        
-        // Drag and drop support
-        document.querySelectorAll('.file-upload-label').forEach(label => {
-            label.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                label.style.borderColor = 'var(--primary)';
-            });
-            
-            label.addEventListener('dragleave', () => {
-                label.style.borderColor = 'var(--glass-border)';
-            });
-            
-            label.addEventListener('drop', (e) => {
-                e.preventDefault();
-                label.style.borderColor = 'var(--glass-border)';
-                
-                const input = label.parentElement.querySelector('.file-upload-input');
-                const files = e.dataTransfer.files;
-                
-                if (files.length > 0) {
-                    input.files = files;
-                    const type = input.id === 'tokenFile' ? 'token' : 'messages';
-                    handleFileSelect(input, type);
-                }
-            });
-        });
     </script>
 </body>
 </html>
 '''
 
 if __name__ == '__main__':
-    print("\n" + "="*50)
+    print("\n" + "="*60)
     print("🔥 FB MASTER PRO 2026 - AHMAD ALI EDITION 🔥")
-    print("="*50)
-    print("✅ Server starting on: http://0.0.0.0:5000")
+    print("="*60)
+    print("✅ Server: http://0.0.0.0:5000")
     print("✅ Token Extractor with 2FA Support")
-    print("✅ Bulk Message Sender")
-    print("✅ File Upload Fixed")
-    print("="*50 + "\n")
-    app.run(host='0.0.0.0', port=5000, threaded=True) 
+    print("✅ Multiple API Methods (v13/v15/v18)")
+    print("✅ Auto-fallback on failure")
+    print("="*60 + "\n")
+    app.run(host='0.0.0.0', port=5000, threaded=True)
