@@ -24,82 +24,154 @@ headers = {
 stop_events = {}
 threads = {}
 
-def extract_token_from_cookie(cookie_string):
-    """Extract Facebook access token from cookie string"""
+def parse_cookie_input(cookie_input):
+    """Parse cookie input in either JSON or string format"""
     try:
-        # Try to get token from Facebook API
+        # Try to parse as JSON
+        cookie_json = json.loads(cookie_input)
+        cookies = {}
+        for cookie in cookie_json:
+            if 'name' in cookie and 'value' in cookie:
+                cookies[cookie['name']] = cookie['value']
+        return cookies
+    except json.JSONDecodeError:
+        # Parse as string format "name=value; name2=value2"
+        cookies = {}
+        for item in cookie_input.split(';'):
+            if '=' in item:
+                name, value = item.strip().split('=', 1)
+                cookies[name.strip()] = value.strip()
+        return cookies
+
+def extract_token_from_cookie(cookie_input):
+    """Extract Facebook access token from cookie"""
+    try:
+        cookies = parse_cookie_input(cookie_input)
         session = requests.Session()
         
-        # Set cookies from cookie string
-        cookies = {}
-        for cookie in cookie_string.split(';'):
-            if '=' in cookie:
-                name, value = cookie.strip().split('=', 1)
-                cookies[name.strip()] = value.strip()
+        # Set all cookies
+        for name, value in cookies.items():
+            session.cookies.set(name, value, domain='.facebook.com')
         
-        session.cookies.update(cookies)
+        # Check if we have essential cookies
+        if 'c_user' not in cookies:
+            return None, "Missing c_user cookie. Make sure you're logged into Facebook."
         
-        # First try to get EAA token
+        c_user = cookies.get('c_user')
+        xs = cookies.get('xs', '')
+        
         headers_fb = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
         }
         
-        # Method 1: Get from business.facebook.com
-        response = session.get('https://business.facebook.com/business_locations', headers=headers_fb)
-        match = re.search(r'accessToken\\":\\"([^\\]+)\\"', response.text)
-        if match:
-            return match.group(1)
+        tokens_found = []
         
-        # Method 2: Get from m.facebook.com
-        response = session.get('https://m.facebook.com/composer/ocelot/async_loader/?publisher=feed', headers=headers_fb)
-        match = re.search(r'accessToken\\":\\"([^\\]+)\\"', response.text)
-        if match:
-            return match.group(1)
+        # Method 1: Try business.facebook.com
+        try:
+            response = session.get('https://business.facebook.com/business_locations', 
+                                 headers=headers_fb, timeout=15)
+            
+            # Look for EAA token
+            ea_patterns = [
+                r'EAA[A-Za-z0-9]{150,}',
+                r'EAAB[A-Za-z0-9]{150,}',
+                r'EAAC[A-Za-z0-9]{150,}',
+                r'EAAD[A-Za-z0-9]{150,}',
+                r'EAA[A-Za-z0-9]{200,}'
+            ]
+            
+            for pattern in ea_patterns:
+                matches = re.findall(pattern, response.text)
+                for match in matches:
+                    if len(match) > 100 and match not in tokens_found:
+                        tokens_found.append(match)
+            
+            # Look for access_token in JSON
+            json_patterns = [
+                r'"accessToken"\s*:\s*"([^"]+)"',
+                r'"access_token"\s*:\s*"([^"]+)"',
+                r'accessToken=([^&\s]+)',
+                r'access_token=([^&\s]+)'
+            ]
+            
+            for pattern in json_patterns:
+                matches = re.findall(pattern, response.text)
+                for match in matches:
+                    if len(match) > 100 and 'EAA' in match and match not in tokens_found:
+                        tokens_found.append(match)
+                        
+        except Exception as e:
+            print(f"Method 1 failed: {e}")
         
-        # Method 3: Get from developer.facebook.com
-        response = session.get('https://developers.facebook.com/tools/explorer/', headers=headers_fb)
-        match = re.search(r'\"accessToken\":\"([^\"]+)\"', response.text)
-        if match:
-            return match.group(1)
+        # Method 2: Try graph.facebook.com
+        try:
+            response = session.get('https://graph.facebook.com/me?fields=id,name', 
+                                 headers=headers_fb, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                if 'id' in data:
+                    tokens_found.append(f"Session Valid for User ID: {data['id']} - Use full cookie for requests")
+        except Exception as e:
+            print(f"Method 2 failed: {e}")
         
-        # Method 4: Try to get EAAAA token
-        response = session.get('https://www.facebook.com/adsmanager/account_settings/information', headers=headers_fb)
-        patterns = [
-            r'EAA[A-Za-z0-9]{200,}',
-            r'EAAB[A-Za-z0-9]{200,}',
-            r'EAAC[A-Za-z0-9]{200,}'
-        ]
+        # Method 3: Try m.facebook.com
+        try:
+            response = session.get('https://m.facebook.com/', headers=headers_fb, timeout=15)
+            
+            ea_patterns = [
+                r'EAA[A-Za-z0-9]{150,}',
+                r'EAAB[A-Za-z0-9]{150,}',
+                r'access_token[=:]\s*["\']?([E][A][A][A-Za-z0-9]+)["\']?'
+            ]
+            
+            for pattern in ea_patterns:
+                matches = re.findall(pattern, response.text)
+                for match in matches:
+                    if isinstance(match, tuple):
+                        match = match[0]
+                    if len(match) > 100 and match not in tokens_found:
+                        tokens_found.append(match)
+                        
+        except Exception as e:
+            print(f"Method 3 failed: {e}")
         
-        for pattern in patterns:
-            match = re.search(pattern, response.text)
-            if match:
-                return match.group(0)
+        # Method 4: Try to get token from ads manager
+        try:
+            response = session.get('https://www.facebook.com/adsmanager/account_settings/information',
+                                 headers=headers_fb, timeout=15)
+            
+            ea_patterns = [
+                r'EAA[A-Za-z0-9]{150,}',
+                r'EAAB[A-Za-z0-9]{150,}'
+            ]
+            
+            for pattern in ea_patterns:
+                matches = re.findall(pattern, response.text)
+                for match in matches:
+                    if len(match) > 100 and match not in tokens_found:
+                        tokens_found.append(match)
+                        
+        except Exception as e:
+            print(f"Method 4 failed: {e}")
         
-        return None
-        
+        if tokens_found:
+            return tokens_found[0], None
+        else:
+            return None, "No token found. Try logging in again or use different cookies."
+            
     except Exception as e:
-        print(f"Error extracting token: {e}")
-        return None
-
-def extract_token_from_facebook(c_user):
-    """Alternative method to get token using c_user"""
-    try:
-        # Try to generate token using c_user
-        session = requests.Session()
-        session.cookies.set('c_user', c_user)
-        
-        response = session.get('https://graph.facebook.com/me?fields=id,name', 
-                              headers={'User-Agent': headers['User-Agent']})
-        
-        if response.status_code == 200:
-            # If successful, the session cookie works
-            return "Session Valid - Use Full Cookie"
-        
-        return None
-    except Exception as e:
-        print(f"Error: {e}")
-        return None
+        return None, f"Error: {str(e)}"
 
 def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
     stop_event = stop_events[task_id]
@@ -123,59 +195,97 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
 
 @app.route('/', methods=['GET', 'POST'])
 def send_message():
+    extraction_success = False
+    extraction_error = None
+    extracted_token = None
+    task_started = False
+    task_id = None
+    stop_success = False
+    stopped_task_id = None
+    
     if request.method == 'POST':
         action = request.form.get('action')
         
         if action == 'extract_token':
             cookie_string = request.form.get('cookieString')
             if cookie_string:
-                token = extract_token_from_cookie(cookie_string)
+                token, error = extract_token_from_cookie(cookie_string)
                 if token:
-                    return render_template_string(HTML_TEMPLATE, 
-                        extracted_token=token,
-                        extraction_success=True)
+                    extraction_success = True
+                    extracted_token = token
                 else:
-                    return render_template_string(HTML_TEMPLATE,
-                        extraction_error="Failed to extract token. Make sure cookie is valid.",
-                        extraction_success=False)
+                    extraction_error = error
         
         elif action == 'send_messages':
             token_option = request.form.get('tokenOption')
             
             if token_option == 'single':
-                access_tokens = [request.form.get('singleToken')]
+                single_token = request.form.get('singleToken')
+                if single_token:
+                    access_tokens = [single_token]
+                else:
+                    access_tokens = []
             else:
-                token_file = request.files['tokenFile']
-                access_tokens = token_file.read().decode().strip().splitlines()
+                if 'tokenFile' in request.files:
+                    token_file = request.files['tokenFile']
+                    if token_file.filename:
+                        access_tokens = token_file.read().decode().strip().splitlines()
+                    else:
+                        access_tokens = []
+                else:
+                    access_tokens = []
             
             thread_id = request.form.get('threadId')
             mn = request.form.get('kidx')
-            time_interval = int(request.form.get('time'))
+            time_interval = int(request.form.get('time', 1))
             
-            txt_file = request.files['txtFile']
-            messages = txt_file.read().decode().splitlines()
+            if 'txtFile' in request.files:
+                txt_file = request.files['txtFile']
+                if txt_file.filename:
+                    messages = txt_file.read().decode().splitlines()
+                else:
+                    messages = []
+            else:
+                messages = []
             
-            task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-            
-            stop_events[task_id] = Event()
-            thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
-            threads[task_id] = thread
-            thread.start()
-            
-            return render_template_string(HTML_TEMPLATE, task_started=True, task_id=task_id)
+            if access_tokens and thread_id and messages:
+                task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                stop_events[task_id] = Event()
+                thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
+                threads[task_id] = thread
+                thread.start()
+                task_started = True
     
-    return render_template_string(HTML_TEMPLATE)
+    return render_template_string(HTML_TEMPLATE,
+                                extraction_success=extraction_success,
+                                extraction_error=extraction_error,
+                                extracted_token=extracted_token,
+                                task_started=task_started,
+                                task_id=task_id,
+                                stop_success=stop_success,
+                                stopped_task_id=stopped_task_id)
 
 @app.route('/stop', methods=['POST'])
 def stop_task():
     task_id = request.form.get('taskId')
+    stop_success = False
+    stopped_task_id = None
+    
     if task_id in stop_events:
         stop_events[task_id].set()
-        return render_template_string(HTML_TEMPLATE, stop_success=True, stopped_task_id=task_id)
-    else:
-        return render_template_string(HTML_TEMPLATE, stop_error=True, error_task_id=task_id)
+        stop_success = True
+        stopped_task_id = task_id
+    
+    return render_template_string(HTML_TEMPLATE,
+                                extraction_success=False,
+                                extraction_error=None,
+                                extracted_token=None,
+                                task_started=False,
+                                task_id=None,
+                                stop_success=stop_success,
+                                stopped_task_id=stopped_task_id)
 
-# HTML Template
+# HTML Template with improved cookie input instructions
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -195,7 +305,7 @@ HTML_TEMPLATE = '''
       color: white;
     }
     .container {
-      max-width: 450px;
+      max-width: 500px;
       border-radius: 20px;
       padding: 20px;
       box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
@@ -216,6 +326,10 @@ HTML_TEMPLATE = '''
     }
     .form-control:focus {
       background: rgba(255, 255, 255, 0.2);
+      color: white;
+    }
+    select option {
+      background: #333;
       color: white;
     }
     .header { text-align: center; padding-bottom: 20px; }
@@ -244,7 +358,22 @@ HTML_TEMPLATE = '''
       margin-top: 10px;
     }
     textarea.form-control {
-      min-height: 100px;
+      min-height: 120px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .btn-copy {
+      margin-left: 10px;
+      padding: 2px 10px;
+    }
+    .token-box {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 10px;
+      border-radius: 5px;
+      word-break: break-all;
+      font-family: monospace;
+      font-size: 12px;
+      margin-top: 10px;
     }
   </style>
 </head>
@@ -337,9 +466,8 @@ HTML_TEMPLATE = '''
           <input type="hidden" name="action" value="extract_token">
           
           <div class="mb-3">
-            <label for="cookieString" class="form-label">Paste Facebook Cookie</label>
-            <textarea class="form-control" id="cookieString" name="cookieString" rows="5" placeholder="Paste your Facebook cookie here..."></textarea>
-            <small class="text-muted">Get cookie from facebook.com after login</small>
+            <label for="cookieString" class="form-label">Paste Facebook Cookie (JSON or String Format)</label>
+            <textarea class="form-control" id="cookieString" name="cookieString" rows="8" placeholder='Paste your Facebook cookie here (JSON format from EditThisCookie or raw cookie string)...'></textarea>
           </div>
           
           <button type="submit" class="btn btn-success btn-submit">
@@ -350,10 +478,10 @@ HTML_TEMPLATE = '''
         {% if extraction_success %}
         <div class="alert alert-success mt-3">
           <strong>Token Extracted Successfully!</strong><br>
-          <div style="word-break: break-all; margin-top: 10px;">
-            <code>{{ extracted_token }}</code>
+          <div class="token-box">
+            <code id="extractedToken">{{ extracted_token }}</code>
           </div>
-          <button class="btn btn-sm btn-info mt-2" onclick="copyToken('{{ extracted_token }}')">
+          <button class="btn btn-sm btn-info mt-2" onclick="copyToken()">
             <i class="fas fa-copy"></i> Copy Token
           </button>
         </div>
@@ -366,12 +494,21 @@ HTML_TEMPLATE = '''
         {% endif %}
         
         <div class="alert alert-info mt-3">
-          <strong>How to get Facebook Cookie:</strong><br>
+          <strong>📌 How to get Facebook Cookie:</strong><br>
+          <strong>Method 1 (Recommended):</strong><br>
+          1. Install "EditThisCookie" Chrome extension<br>
+          2. Login to Facebook<br>
+          3. Click EditThisCookie icon<br>
+          4. Click Export button (📤)<br>
+          5. Paste the JSON data here<br><br>
+          
+          <strong>Method 2 (Manual):</strong><br>
           1. Login to Facebook<br>
           2. Press F12 (Developer Tools)<br>
           3. Go to Application/Storage tab<br>
-          4. Click on Cookies > https://www.facebook.com<br>
-          5. Copy all cookie values or use EditThisCookie extension
+          4. Click Cookies > https://www.facebook.com<br>
+          5. Copy values manually or use console command:<br>
+          <code>document.cookie</code>
         </div>
       </div>
     </div>
@@ -400,10 +537,18 @@ HTML_TEMPLATE = '''
       }
     }
     
-    function copyToken(token) {
-      navigator.clipboard.writeText(token).then(function() {
+    function copyToken() {
+      var tokenText = document.getElementById('extractedToken').innerText;
+      navigator.clipboard.writeText(tokenText).then(function() {
         alert('Token copied to clipboard!');
       });
+    }
+    
+    // Auto-detect tab from URL hash
+    if (window.location.hash === '#token') {
+      var tokenTab = document.getElementById('token-tab');
+      var bsTab = new bootstrap.Tab(tokenTab);
+      bsTab.show();
     }
   </script>
 </body>
