@@ -1,824 +1,1268 @@
-# FB_PRO_2026_FINAL.py
-# 100% Working with Page Access Token
+# requirements.txt
+"""
+flask==2.3.3
+flask-socketio==5.3.4
+requests==2.31.0
+beautifulsoup4==4.12.2
+pyqt5==5.15.9
+qdarkstyle==3.2.3
+python-socketio==5.9.0
+eventlet==0.33.3
+colorama==0.4.6
+"""
 
-from flask import Flask, request, render_template_string, jsonify
+# fb_server_core.py - Main Server File
+import os
+import sys
+import time
+import json
+import uuid
+import random
+import hashlib
 import requests
 import threading
-import time
-import random
-import string
+import queue
 from datetime import datetime
+from typing import Dict, List, Optional
 
-app = Flask(__name__)
+# Flask & SocketIO for Server
+from flask import Flask, render_template, request, jsonify
+from flask_socketio import SocketIO, emit
+import eventlet
+eventlet.monkey_patch()
 
-active_tasks = {}
-stop_events = {}
+# Beautiful UI Colors
+class Colors:
+    DARK_BG = "#0A0E27"
+    CARD_BG = "#1A1F3A"
+    ACCENT = "#00D2FF"
+    ACCENT_GRADIENT = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+    SUCCESS = "#00F2FE"
+    WARNING = "#F2994A"
+    ERROR = "#EB5757"
+    TEXT_PRIMARY = "#FFFFFF"
+    TEXT_SECONDARY = "#8892B0"
+    BORDER = "#2A2F4A"
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Content-Type': 'application/json'
-}
-
-# ==================== TOKEN EXTRACTOR ====================
-def extract_fb_token(email, password):
-    try:
-        sess = requests.Session()
-        url = "https://b-api.facebook.com/method/auth.login"
-        params = {
-            'access_token': '350685531728|62f8ce9f74b12f84c123cc23437a4a32',
-            'format': 'json',
-            'email': email,
-            'password': password,
-            'generate_session_cookies': '1',
-            'credentials_type': 'password',
-            'source': 'login',
-        }
+class FacebookConvoServer:
+    def __init__(self):
+        self.app = Flask(__name__)
+        self.app.config['SECRET_KEY'] = 'fb-convo-server-secret'
+        self.socketio = SocketIO(self.app, cors_allowed_origins="*", async_mode='eventlet')
+        self.active_tokens = {}
+        self.message_queue = queue.Queue()
+        self.server_running = False
+        self.thread_pool = []
+        self.setup_routes()
         
-        resp = sess.post(url, data=params, headers={'User-Agent': HEADERS['User-Agent']})
-        data = resp.json()
-        
-        if "access_token" in data:
-            return True, data["access_token"]
-        elif "session_key" in data:
-            return True, data["session_key"]
-        else:
-            error = data.get('error', {}).get('message', 'Login failed')
-            return False, error
-    except Exception as e:
-        return False, str(e)
-
-# ==================== PAGE ID EXTRACTOR ====================
-def get_page_id(access_token):
-    """Get Page ID from Page Access Token"""
-    try:
-        url = f"https://graph.facebook.com/v21.0/me/accounts"
-        params = {'access_token': access_token}
-        resp = requests.get(url, params=params, headers=HEADERS)
-        data = resp.json()
-        
-        if 'data' in data and len(data['data']) > 0:
-            return True, data['data'][0]['id'], data['data'][0].get('name', 'Unknown')
-        else:
-            return False, None, "No pages found"
-    except Exception as e:
-        return False, None, str(e)
-
-# ==================== MESSAGE SENDER (OFFICIAL API) ====================
-def send_via_page_api(page_id, access_token, thread_id, message):
-    """Official Facebook Graph API v21.0"""
-    try:
-        url = f"https://graph.facebook.com/v21.0/{page_id}/messages"
-        
-        payload = {
-            'recipient': {'id': thread_id},
-            'message': {'text': message},
-            'messaging_type': 'RESPONSE',
-            'access_token': access_token
-        }
-        
-        resp = requests.post(url, json=payload, headers=HEADERS, timeout=15)
-        
-        if resp.status_code == 200:
-            return True, "API v21.0"
-        else:
-            error_data = resp.json() if resp.text else {}
-            error_msg = error_data.get('error', {}).get('message', f'HTTP {resp.status_code}')
-            return False, error_msg
-    except Exception as e:
-        return False, str(e)
-
-def send_messages_worker(task_id, tokens, thread_id, prefix, delay, messages):
-    stop_event = stop_events[task_id]
-    count = 0
-    success = 0
-    
-    # Clean thread ID
-    clean_tid = thread_id.replace('t_', '') if thread_id.startswith('t_') else thread_id
-    
-    for token in tokens:
-        token = token.strip()
-        if not token:
-            continue
+    def setup_routes(self):
+        @self.app.route('/')
+        def index():
+            return render_template('index.html')
             
-        # Get Page ID
-        ok, page_id, page_name = get_page_id(token)
-        
-        if ok:
-            active_tasks[task_id]['logs'].append({
-                'time': datetime.now().strftime('%H:%M:%S'),
-                'msg': f'✅ Page found: {page_name} ({page_id})',
-                'status': 'success'
-            })
+        @self.app.route('/api/extract_token', methods=['POST'])
+        def extract_token_endpoint():
+            data = request.json
+            email = data.get('email')
+            password = data.get('password')
             
-            # Send messages using this page
-            while not stop_event.is_set():
-                for msg in messages:
-                    if stop_event.is_set():
-                        break
-                    
-                    full_msg = f"{prefix} {msg}"
-                    
-                    ok_send, result = send_via_page_api(page_id, token, clean_tid, full_msg)
-                    count += 1
-                    
-                    if ok_send:
-                        success += 1
-                        active_tasks[task_id]['logs'].append({
-                            'time': datetime.now().strftime('%H:%M:%S'),
-                            'msg': f'✅ SENT: {full_msg[:30]}...',
-                            'status': 'success'
-                        })
-                    else:
-                        active_tasks[task_id]['logs'].append({
-                            'time': datetime.now().strftime('%H:%M:%S'),
-                            'msg': f'❌ FAILED: {result[:40]}',
-                            'status': 'error'
-                        })
-                    
-                    active_tasks[task_id]['total'] = count
-                    active_tasks[task_id]['success'] = success
-                    
-                    time.sleep(delay)
-        else:
-            active_tasks[task_id]['logs'].append({
-                'time': datetime.now().strftime('%H:%M:%S'),
-                'msg': f'❌ Invalid/No Page: {page_name}',
-                'status': 'error'
-            })
-    
-    active_tasks[task_id]['status'] = 'stopped'
-
-# ==================== FLASK ROUTES ====================
-@app.route('/')
-def home():
-    return render_template_string(HTML_PAGE)
-
-@app.route('/api/extract', methods=['POST'])
-def api_extract():
-    email = request.form.get('email', '')
-    password = request.form.get('password', '')
-    
-    if not email or not password:
-        return jsonify({'ok': False, 'error': 'Email and password required'})
-    
-    ok, result = extract_fb_token(email, password)
-    return jsonify({'ok': ok, 'token': result if ok else None, 'error': result if not ok else None})
-
-@app.route('/api/start', methods=['POST'])
-def api_start():
-    try:
-        token_type = request.form.get('token_type', 'single')
-        
-        if token_type == 'single':
-            token = request.form.get('token', '').strip()
+            if not email or not password:
+                return jsonify({'success': False, 'error': 'Email and password required'})
+                
+            token_info = self.extract_facebook_token(email, password)
+            return jsonify(token_info)
+            
+        @self.app.route('/api/start_server', methods=['POST'])
+        def start_server_endpoint():
+            data = request.json
+            token = data.get('token')
+            thread_count = data.get('threads', 5)
+            
             if not token:
-                return jsonify({'ok': False, 'error': 'Token is required'})
-            tokens = [token]
-        else:
-            if 'token_file' not in request.files:
-                return jsonify({'ok': False, 'error': 'Token file is required'})
+                return jsonify({'success': False, 'error': 'Token required'})
+                
+            result = self.start_convo_server(token, thread_count)
+            return jsonify(result)
             
-            file = request.files['token_file']
-            if file.filename == '':
-                return jsonify({'ok': False, 'error': 'No file selected'})
+        @self.app.route('/api/stop_server', methods=['POST'])
+        def stop_server_endpoint():
+            result = self.stop_convo_server()
+            return jsonify(result)
             
-            content = file.read().decode('utf-8', errors='ignore')
-            tokens = [t.strip() for t in content.split('\n') if t.strip()]
+        @self.app.route('/api/send_bulk', methods=['POST'])
+        def send_bulk_endpoint():
+            data = request.json
+            token = data.get('token')
+            thread_ids = data.get('thread_ids', [])
+            message = data.get('message')
             
-            if not tokens:
-                return jsonify({'ok': False, 'error': 'No tokens found'})
-        
-        thread_id = request.form.get('thread_id', '').strip()
-        prefix = request.form.get('prefix', '').strip()
-        delay = int(request.form.get('delay', 3))
-        
-        if 'msg_file' not in request.files:
-            return jsonify({'ok': False, 'error': 'Messages file is required'})
-        
-        msg_file = request.files['msg_file']
-        if msg_file.filename == '':
-            return jsonify({'ok': False, 'error': 'No messages file selected'})
-        
-        content = msg_file.read().decode('utf-8', errors='ignore')
-        messages = [m.strip() for m in content.split('\n') if m.strip()]
-        
-        if not messages:
-            return jsonify({'ok': False, 'error': 'No messages found'})
-        
-        if not thread_id:
-            return jsonify({'ok': False, 'error': 'Thread ID is required'})
-        
-        task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-        
-        stop_events[task_id] = threading.Event()
-        active_tasks[task_id] = {
-            'status': 'running',
-            'total': 0,
-            'success': 0,
-            'logs': [],
-            'start': datetime.now().strftime('%H:%M:%S')
+            if not all([token, thread_ids, message]):
+                return jsonify({'success': False, 'error': 'Missing parameters'})
+                
+            result = self.send_bulk_messages(token, thread_ids, message)
+            return jsonify(result)
+            
+        @self.app.route('/api/get_conversations', methods=['POST'])
+        def get_conversations_endpoint():
+            data = request.json
+            token = data.get('token')
+            limit = data.get('limit', 50)
+            
+            if not token:
+                return jsonify({'success': False, 'error': 'Token required'})
+                
+            conversations = self.get_conversations(token, limit)
+            return jsonify(conversations)
+            
+        @self.socketio.on('connect')
+        def handle_connect():
+            emit('connected', {'status': 'Connected to FB Convo Server'})
+            
+        @self.socketio.on('server_status')
+        def handle_status_request():
+            emit('status_update', {
+                'running': self.server_running,
+                'active_tokens': len(self.active_tokens),
+                'queue_size': self.message_queue.qsize()
+            })
+    
+    def extract_facebook_token(self, email: str, password: str) -> Dict:
+        """Extract Facebook access token from credentials"""
+        try:
+            session = requests.Session()
+            
+            # Generate device identifiers
+            device_id = str(uuid.uuid4())
+            adid = str(uuid.uuid4())
+            
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Linux; Android 14; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+                "Host": "graph.facebook.com",
+                "Authorization": "OAuth 350685531728|62f8ce9f74b12f84c123cc23437a4a32",
+                "X-FB-Connection-Type": "WIFI"
+            }
+            
+            data = {
+                "adid": adid,
+                "email": email,
+                "password": password,
+                "format": "json",
+                "device_id": device_id,
+                "cpl": "true",
+                "family_device_id": str(uuid.uuid4()),
+                "credentials_type": "device_based_login_password",
+                "generate_session_cookies": "1",
+                "error_detail_type": "button_with_disabled",
+                "source": "login",
+                "method": "auth.login",
+                "generate_machine_id": "1",
+                "meta_inf_fbmeta": ""
+            }
+            
+            response = session.post(
+                "https://graph.facebook.com/auth/login",
+                data=data,
+                headers=headers,
+                timeout=30
+            )
+            
+            result = response.json()
+            
+            if "access_token" in result:
+                token = result["access_token"]
+                
+                # Get user info with token
+                user_info = self.get_user_info(token)
+                
+                return {
+                    'success': True,
+                    'token': token,
+                    'user_info': user_info,
+                    'expires': result.get('expires', 0)
+                }
+            elif "error" in result:
+                return {
+                    'success': False,
+                    'error': result['error'].get('message', 'Unknown error')
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'Authentication failed'
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def get_user_info(self, token: str) -> Dict:
+        """Get user information using token"""
+        try:
+            response = requests.get(
+                "https://graph.facebook.com/me",
+                params={
+                    'access_token': token,
+                    'fields': 'id,name,email,picture'
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    'id': data.get('id'),
+                    'name': data.get('name'),
+                    'email': data.get('email'),
+                    'picture': data.get('picture', {}).get('data', {}).get('url')
+                }
+        except:
+            pass
+            
+        return {'id': 'Unknown', 'name': 'Unknown'}
+    
+    def get_conversations(self, token: str, limit: int = 50) -> Dict:
+        """Get Facebook conversations"""
+        try:
+            response = requests.get(
+                "https://graph.facebook.com/v18.0/me/conversations",
+                params={
+                    'access_token': token,
+                    'fields': 'participants,messages.limit(1){message,created_time},unread_count,updated_time',
+                    'limit': limit
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                conversations = []
+                
+                for conv in data.get('data', []):
+                    participants = conv.get('participants', {}).get('data', [])
+                    other_participants = [p for p in participants if p.get('id') != 'me']
+                    
+                    conversations.append({
+                        'id': conv.get('id'),
+                        'updated_time': conv.get('updated_time'),
+                        'unread_count': conv.get('unread_count', 0),
+                        'participants': other_participants[:3],
+                        'snippet': conv.get('messages', {}).get('data', [{}])[0].get('message', '')
+                    })
+                
+                return {
+                    'success': True,
+                    'conversations': conversations,
+                    'total': len(conversations)
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"API Error: {response.status_code}"
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def send_bulk_messages(self, token: str, thread_ids: List[str], message: str) -> Dict:
+        """Send bulk messages to multiple conversations"""
+        results = {
+            'success': True,
+            'sent': 0,
+            'failed': 0,
+            'details': []
         }
         
-        thread = threading.Thread(
-            target=send_messages_worker,
-            args=(task_id, tokens, thread_id, prefix, delay, messages)
-        )
-        thread.daemon = True
-        thread.start()
+        for thread_id in thread_ids:
+            try:
+                response = requests.post(
+                    f"https://graph.facebook.com/v18.0/{thread_id}/messages",
+                    data={
+                        'access_token': token,
+                        'message': message
+                    },
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    results['sent'] += 1
+                    results['details'].append({
+                        'thread_id': thread_id,
+                        'status': 'success'
+                    })
+                else:
+                    results['failed'] += 1
+                    results['details'].append({
+                        'thread_id': thread_id,
+                        'status': 'failed',
+                        'error': response.text
+                    })
+                    
+                # Rate limiting
+                time.sleep(0.5)
+                
+            except Exception as e:
+                results['failed'] += 1
+                results['details'].append({
+                    'thread_id': thread_id,
+                    'status': 'failed',
+                    'error': str(e)
+                })
         
-        return jsonify({'ok': True, 'task_id': task_id})
+        return results
+    
+    def start_convo_server(self, token: str, thread_count: int = 5) -> Dict:
+        """Start the conversation server"""
+        if self.server_running:
+            return {'success': False, 'error': 'Server already running'}
         
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)})
+        self.server_running = True
+        session_id = str(uuid.uuid4())
+        
+        self.active_tokens[session_id] = {
+            'token': token,
+            'threads': thread_count,
+            'started_at': datetime.now().isoformat(),
+            'status': 'active'
+        }
+        
+        # Start worker threads
+        for i in range(thread_count):
+            thread = threading.Thread(
+                target=self.convo_worker,
+                args=(session_id, i),
+                daemon=True
+            )
+            thread.start()
+            self.thread_pool.append(thread)
+        
+        self.socketio.emit('server_started', {
+            'session_id': session_id,
+            'thread_count': thread_count
+        })
+        
+        return {
+            'success': True,
+            'session_id': session_id,
+            'message': f'Server started with {thread_count} threads'
+        }
+    
+    def stop_convo_server(self) -> Dict:
+        """Stop the conversation server"""
+        if not self.server_running:
+            return {'success': False, 'error': 'Server not running'}
+        
+        self.server_running = False
+        
+        # Clear active tokens
+        self.active_tokens.clear()
+        
+        # Wait for threads to finish
+        for thread in self.thread_pool:
+            thread.join(timeout=2)
+        
+        self.thread_pool.clear()
+        
+        self.socketio.emit('server_stopped', {
+            'message': 'Server stopped successfully'
+        })
+        
+        return {
+            'success': True,
+            'message': 'Server stopped successfully'
+        }
+    
+    def convo_worker(self, session_id: str, worker_id: int):
+        """Worker thread for processing conversations"""
+        while self.server_running and session_id in self.active_tokens:
+            try:
+                # Process message queue
+                if not self.message_queue.empty():
+                    task = self.message_queue.get(timeout=1)
+                    
+                    # Emit progress update
+                    self.socketio.emit('worker_update', {
+                        'worker_id': worker_id,
+                        'task': task
+                    })
+                
+                time.sleep(0.1)
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Worker {worker_id} error: {e}")
+    
+    def run(self, host='0.0.0.0', port=5000):
+        """Run the Flask server"""
+        print(f"\033[92m[+] Facebook Convo Server starting on http://{host}:{port}\033[0m")
+        self.socketio.run(self.app, host=host, port=port, debug=False)
 
-@app.route('/api/stop_all', methods=['POST'])
-def api_stop_all():
-    for task_id in stop_events:
-        stop_events[task_id].set()
-    return jsonify({'ok': True})
-
-@app.route('/api/status')
-def api_status():
-    return jsonify(active_tasks)
-
-# ==================== HTML PAGE ====================
-HTML_PAGE = '''
+# HTML Template for Frontend
+HTML_TEMPLATE = '''
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FB MASTER PRO 2026 | AHMAD ALI</title>
+    <title>AHMII FB CONVO SERVER • PREMIUM</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
         body {
-            font-family: 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(135deg, #0a0e27 0%, #1a0a2e 100%);
-            min-height: 100vh;
-            color: #fff;
+            font-family: 'Inter', sans-serif;
+            background: #0A0E27;
+            color: #FFFFFF;
+            overflow-x: hidden;
+        }
+        
+        /* Animated Gradient Background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: linear-gradient(45deg, #0A0E27, #1A1F3A, #0F1433, #1A1F3A);
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+        }
+        
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        /* Glassmorphism Effect */
+        .glass {
+            background: rgba(26, 31, 58, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0, 210, 255, 0.1);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
             padding: 20px;
         }
-        .container { max-width: 500px; margin: 0 auto; }
-        .header { text-align: center; margin-bottom: 30px; }
-        h1 {
-            font-size: 26px;
-            background: linear-gradient(45deg, #00ff88, #00d4ff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 5px;
-        }
-        .sub { color: #aaa; font-size: 13px; letter-spacing: 2px; }
-        .badge {
-            background: linear-gradient(45deg, #00ff88, #00d4ff);
-            color: #0a0e27;
-            padding: 3px 12px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: bold;
-            display: inline-block;
-            margin-top: 8px;
-        }
-        .card {
-            background: rgba(255,255,255,0.05);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 20px;
-            padding: 25px;
-            margin-bottom: 20px;
-        }
-        .tabs {
-            display: flex;
-            gap: 5px;
-            margin-bottom: 20px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            padding-bottom: 10px;
-        }
-        .tab {
-            flex: 1;
-            padding: 12px;
-            background: transparent;
-            border: none;
-            color: #fff;
-            font-size: 14px;
-            font-weight: bold;
-            cursor: pointer;
-            border-radius: 10px;
-        }
-        .tab.active {
-            background: rgba(0,255,136,0.1);
-            color: #00ff88;
-        }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .form-group { margin-bottom: 18px; }
-        label {
-            display: block;
-            margin-bottom: 8px;
-            color: #ccc;
-            font-size: 13px;
-            font-weight: bold;
-            text-transform: uppercase;
-        }
-        input, select {
-            width: 100%;
-            padding: 14px 16px;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 12px;
-            color: #fff;
-            font-size: 15px;
-            outline: none;
-        }
-        input:focus, select:focus { border-color: #00ff88; }
-        .file-box {
-            background: rgba(255,255,255,0.03);
-            border: 2px dashed rgba(255,255,255,0.2);
-            border-radius: 15px;
-            padding: 25px;
+        
+        /* Header */
+        .header {
             text-align: center;
-            cursor: pointer;
-        }
-        .file-box:hover {
-            border-color: #00ff88;
-            background: rgba(0,255,136,0.05);
-        }
-        .file-box.selected {
-            border-color: #00c853;
-            background: rgba(0,200,83,0.05);
-        }
-        .file-name {
-            color: #00d4ff;
-            font-size: 13px;
-            margin-top: 8px;
-            word-break: break-all;
-        }
-        .hidden-file { display: none; }
-        .btn {
-            width: 100%;
-            padding: 16px;
-            border: none;
-            border-radius: 50px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            text-transform: uppercase;
-            margin-top: 10px;
-        }
-        .btn-primary {
-            background: linear-gradient(45deg, #00ff88, #00d4ff);
-            color: #0a0e27;
-        }
-        .btn-danger {
-            background: linear-gradient(45deg, #ff3366, #ff6699);
-            color: #fff;
-        }
-        .btn-warning {
-            background: linear-gradient(45deg, #ffbb33, #ffdd66);
-            color: #0a0e27;
-        }
-        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-        .stat-card {
-            background: rgba(255,255,255,0.05);
-            border-radius: 15px;
-            padding: 12px 5px;
-            text-align: center;
-        }
-        .stat-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #00ff88;
-        }
-        .stat-label {
-            font-size: 10px;
-            color: #aaa;
-            text-transform: uppercase;
-        }
-        .console {
-            background: rgba(0,0,0,0.5);
-            border-radius: 15px;
-            padding: 15px;
-            height: 250px;
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 12px;
-        }
-        .console-line {
-            padding: 5px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-        }
-        .console-line.success { color: #00c853; }
-        .console-line.error { color: #ff3366; }
-        .alert {
-            padding: 12px 16px;
-            border-radius: 12px;
-            margin-bottom: 15px;
-            display: none;
-            font-size: 14px;
-        }
-        .alert-success {
-            background: rgba(0,200,83,0.1);
-            border: 1px solid #00c853;
-            color: #00c853;
-        }
-        .alert-error {
-            background: rgba(255,51,102,0.1);
-            border: 1px solid #ff3366;
-            color: #ff3366;
-        }
-        .alert-info {
-            background: rgba(0,212,255,0.1);
-            border: 1px solid #00d4ff;
-            color: #00d4ff;
-        }
-        .token-box {
-            background: rgba(0,255,136,0.1);
-            border: 1px solid #00ff88;
-            border-radius: 12px;
-            padding: 15px;
-            margin-top: 15px;
-            word-break: break-all;
+            padding: 30px 0;
             position: relative;
         }
-        .copy-btn {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid rgba(255,255,255,0.2);
-            color: #fff;
-            padding: 5px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 12px;
+        
+        .glowing-text {
+            font-size: 48px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #00D2FF 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: glow 3s ease-in-out infinite alternate;
         }
-        .info-box {
-            background: rgba(0,212,255,0.1);
-            border: 1px solid #00d4ff;
-            border-radius: 12px;
-            padding: 15px;
+        
+        @keyframes glow {
+            from { filter: drop-shadow(0 0 10px rgba(102, 126, 234, 0.5)); }
+            to { filter: drop-shadow(0 0 20px rgba(0, 210, 255, 0.8)); }
+        }
+        
+        .subtitle {
+            color: #8892B0;
+            margin-top: 10px;
+            font-size: 16px;
+            letter-spacing: 2px;
+        }
+        
+        /* Status Bar */
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 25px;
+            margin-bottom: 25px;
+        }
+        
+        .server-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .pulse {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #EB5757;
+            box-shadow: 0 0 10px #EB5757;
+            animation: pulse-animation 2s infinite;
+        }
+        
+        .pulse.active {
+            background: #00F2FE;
+            box-shadow: 0 0 20px #00F2FE;
+        }
+        
+        @keyframes pulse-animation {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.1); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        
+        /* Cards */
+        .card-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .card {
+            padding: 25px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0, 210, 255, 0.2);
+        }
+        
+        .card-title {
+            font-size: 20px;
+            font-weight: 600;
             margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            color: #666;
+        
+        .card-title i {
+            color: #00D2FF;
+        }
+        
+        /* Form Elements */
+        .input-group {
+            margin-bottom: 15px;
+        }
+        
+        .input-label {
+            display: block;
+            margin-bottom: 8px;
+            color: #8892B0;
+            font-size: 14px;
+        }
+        
+        .input-field {
+            width: 100%;
+            padding: 12px 15px;
+            background: rgba(10, 14, 39, 0.5);
+            border: 1px solid #2A2F4A;
+            border-radius: 10px;
+            color: #FFFFFF;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        .input-field:focus {
+            outline: none;
+            border-color: #00D2FF;
+            box-shadow: 0 0 15px rgba(0, 210, 255, 0.3);
+        }
+        
+        .input-field::placeholder {
+            color: #4A5073;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #00F2FE 0%, #4FACFE 100%);
+            color: white;
+        }
+        
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0, 242, 254, 0.4);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #EB5757 0%, #F2994A 100%);
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(235, 87, 87, 0.4);
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        /* Token Display */
+        .token-box {
+            background: rgba(10, 14, 39, 0.5);
+            border: 1px solid #2A2F4A;
+            border-radius: 10px;
+            padding: 15px;
+            font-family: 'Monaco', 'Courier New', monospace;
             font-size: 12px;
+            word-break: break-all;
+            margin-top: 15px;
+            max-height: 100px;
+            overflow-y: auto;
         }
+        
+        /* Conversations List */
+        .conv-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .conv-item {
+            padding: 12px;
+            border-bottom: 1px solid #2A2F4A;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        
+        .conv-item:hover {
+            background: rgba(0, 210, 255, 0.1);
+        }
+        
+        .conv-item.selected {
+            background: rgba(0, 210, 255, 0.2);
+            border-left: 3px solid #00D2FF;
+        }
+        
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        
+        .stat-card {
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #00D2FF;
+        }
+        
+        .stat-label {
+            color: #8892B0;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        
+        /* Progress Bar */
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 15px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00F2FE 0%, #4FACFE 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 3px;
+        }
+        
+        /* Log Console */
+        .log-console {
+            background: rgba(10, 14, 39, 0.8);
+            border-radius: 10px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+        
+        .log-entry {
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .log-time {
+            color: #4A5073;
+            margin-right: 10px;
+        }
+        
+        .log-info { color: #00D2FF; }
+        .log-success { color: #00F2FE; }
+        .log-error { color: #EB5757; }
+        .log-warning { color: #F2994A; }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .card-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .glowing-text {
+                font-size: 32px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(26, 31, 58, 0.5);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+        }
+        
+        /* Loading Spinner */
         .spinner {
             display: inline-block;
-            width: 18px;
-            height: 18px;
-            border: 3px solid rgba(255,255,255,0.3);
-            border-top-color: #00ff88;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
             border-radius: 50%;
-            animation: spin 1s linear infinite;
+            border-top-color: #00D2FF;
+            animation: spin 1s ease-in-out infinite;
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Owner Badge */
+        .owner-badge {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            background: rgba(26, 31, 58, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 50px;
+            border: 1px solid rgba(0, 210, 255, 0.3);
+            color: #00D2FF;
+            font-weight: 600;
+            z-index: 1000;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        .owner-badge i {
+            margin-right: 8px;
+        }
     </style>
 </head>
 <body>
+    <div class="bg-animation"></div>
+    
     <div class="container">
+        <!-- Header -->
         <div class="header">
-            <h1>🔥 FB MASTER PRO 2026</h1>
-            <div class="sub">AHMAD ALI EDITION</div>
-            <span class="badge">✅ PAGE API METHOD - 100% WORKING</span>
+            <h1 class="glowing-text">AHMII FB CONVO SERVER</h1>
+            <p class="subtitle">PREMIUM • PROFESSIONAL • POWERFUL</p>
         </div>
         
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-value" id="totalMsg">0</div>
-                <div class="stat-label">Sent</div>
+        <!-- Status Bar -->
+        <div class="status-bar glass">
+            <div class="server-indicator">
+                <div class="pulse" id="serverPulse"></div>
+                <span id="serverStatusText">Server Offline</span>
             </div>
-            <div class="stat-card">
-                <div class="stat-value" id="activeTasks">0</div>
-                <div class="stat-label">Active</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="successMsg">0</div>
-                <div class="stat-label">Success</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="uptime">00:00</div>
-                <div class="stat-label">Uptime</div>
+            <div>
+                <span style="color: #8892B0;">OWNER:</span>
+                <span style="color: #00D2FF; margin-left: 8px;">AHMAD ALI (RDX)</span>
             </div>
         </div>
         
-        <div class="card">
-            <div class="tabs">
-                <button class="tab active" onclick="switchTab('extract')">🔑 Extract</button>
-                <button class="tab" onclick="switchTab('send')">📨 Send</button>
-                <button class="tab" onclick="switchTab('monitor')">📊 Monitor</button>
+        <!-- Stats Grid -->
+        <div class="stats-grid">
+            <div class="stat-card glass">
+                <div class="stat-value" id="activeTokens">0</div>
+                <div class="stat-label">Active Tokens</div>
+            </div>
+            <div class="stat-card glass">
+                <div class="stat-value" id="messagesSent">0</div>
+                <div class="stat-label">Messages Sent</div>
+            </div>
+            <div class="stat-card glass">
+                <div class="stat-value" id="queueSize">0</div>
+                <div class="stat-label">Queue Size</div>
+            </div>
+        </div>
+        
+        <!-- Main Card Grid -->
+        <div class="card-grid">
+            <!-- Token Extractor Card -->
+            <div class="card glass">
+                <div class="card-title">
+                    <span>🔐 TOKEN EXTRACTOR</span>
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Email / Phone</label>
+                    <input type="text" class="input-field" id="emailInput" placeholder="example@email.com">
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Password</label>
+                    <input type="password" class="input-field" id="passwordInput" placeholder="••••••••">
+                </div>
+                <button class="btn btn-primary" onclick="extractToken()">
+                    <span id="extractBtnText">Extract Token</span>
+                </button>
+                <div class="token-box" id="tokenDisplay" style="display: none;"></div>
             </div>
             
-            <div id="alertBox"></div>
-            
-            <!-- EXTRACT TAB -->
-            <div id="tab-extract" class="tab-content active">
-                <form id="extractForm">
-                    <div class="form-group">
-                        <label>📧 Email / Phone</label>
-                        <input type="text" id="extEmail" placeholder="Enter email or phone" required>
-                    </div>
-                    <div class="form-group">
-                        <label>🔒 Password</label>
-                        <input type="password" id="extPass" placeholder="Enter password" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary" id="extractBtn">
-                        <span id="extractBtnText">🔓 Extract Token</span>
+            <!-- Server Control Card -->
+            <div class="card glass">
+                <div class="card-title">
+                    <span>⚡ SERVER CONTROL</span>
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Access Token</label>
+                    <input type="text" class="input-field" id="serverTokenInput" placeholder="Paste your FB token">
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Thread Count</label>
+                    <input type="number" class="input-field" id="threadCountInput" value="5" min="1" max="20">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-success" onclick="startServer()" id="startServerBtn">
+                        ▶ START SERVER
                     </button>
-                </form>
-                <div id="tokenResult" style="display:none;">
-                    <div class="token-box">
-                        <button class="copy-btn" onclick="copyToken()">📋 Copy</button>
-                        <strong style="color:#00ff88;">Token:</strong><br>
-                        <span id="extractedToken" style="font-size:12px;"></span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- SEND TAB -->
-            <div id="tab-send" class="tab-content">
-                <div class="info-box">
-                    <strong>📌 IMPORTANT:</strong> Use PAGE ACCESS TOKEN (starts with EAA..., 200+ chars).
-                    <br>Get it from: Facebook Developers → Graph API Explorer → Select Page → Generate Token with pages_messaging permission.
-                </div>
-                
-                <form id="sendForm" enctype="multipart/form-data">
-                    <div class="form-group">
-                        <label>🎯 Token Type</label>
-                        <select id="tokenType" onchange="toggleTokenInput()">
-                            <option value="single">Single Token</option>
-                            <option value="file">Token File</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group" id="singleTokenDiv">
-                        <label>🔑 Page Access Token</label>
-                        <input type="text" id="singleToken" placeholder="Paste Page Access Token (EAA...)">
-                    </div>
-                    
-                    <div class="form-group" id="tokenFileDiv" style="display:none;">
-                        <label>📁 Token File</label>
-                        <div class="file-box" id="tokenFileBox" onclick="document.getElementById('tokenFile').click()">
-                            <div>📂 Click to select token file</div>
-                            <div class="file-name" id="tokenFileName"></div>
-                        </div>
-                        <input type="file" class="hidden-file" id="tokenFile" accept=".txt" onchange="handleFileSelect(this, 'token')">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>💬 Thread ID (Recipient ID)</label>
-                        <input type="text" id="threadId" placeholder="Facebook User ID (numbers only)" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>🏷️ Message Prefix</label>
-                        <input type="text" id="prefix" placeholder="Enter prefix" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>⏱️ Delay (seconds)</label>
-                        <input type="number" id="delay" value="3" min="2" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>📄 Messages File</label>
-                        <div class="file-box" id="msgFileBox" onclick="document.getElementById('msgFile').click()">
-                            <div>📄 Click to select messages file</div>
-                            <div class="file-name" id="msgFileName"></div>
-                        </div>
-                        <input type="file" class="hidden-file" id="msgFile" accept=".txt" onchange="handleFileSelect(this, 'msg')" required>
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary" id="startBtn">
-                        <span id="startBtnText">🚀 START SENDING</span>
+                    <button class="btn btn-danger" onclick="stopServer()" id="stopServerBtn" disabled>
+                        ⏹ STOP SERVER
                     </button>
-                </form>
-            </div>
-            
-            <!-- MONITOR TAB -->
-            <div id="tab-monitor" class="tab-content">
-                <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-                    <span style="color:#00ff88;">📡 Live Console</span>
-                    <span style="background:#ff3366; padding:3px 10px; border-radius:20px; font-size:11px;">🔴 LIVE</span>
                 </div>
-                <div class="console" id="console">
-                    <div class="console-line">🚀 FB Master Pro Started</div>
-                    <div class="console-line success">✅ System Ready - Page API Method</div>
-                    <div class="console-line">📡 Waiting for tasks...</div>
-                </div>
-                <div style="display:flex; gap:10px; margin-top:15px;">
-                    <button class="btn btn-warning" onclick="clearConsole()">🗑️ Clear</button>
-                    <button class="btn btn-danger" onclick="stopAllTasks()">⏹️ Stop All</button>
+                <div class="progress-bar" id="serverProgress" style="display: none;">
+                    <div class="progress-fill" style="width: 0%"></div>
                 </div>
             </div>
         </div>
         
-        <div class="footer">
-            <p>© 2026 FB MASTER PRO | <span style="color:#00ff88;">AHMAD ALI (RDX)</span></p>
+        <!-- Bulk Messaging Card -->
+        <div class="card glass" style="margin-bottom: 25px;">
+            <div class="card-title">
+                <span>💬 BULK MESSAGING</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                    <label class="input-label">Select Conversations</label>
+                    <button class="btn btn-primary" onclick="loadConversations()" style="margin-bottom: 10px;">
+                        📋 Load Conversations
+                    </button>
+                    <div class="conv-list" id="conversationsList">
+                        <div style="padding: 20px; text-align: center; color: #4A5073;">
+                            Click "Load Conversations" to fetch
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label class="input-label">Message</label>
+                    <textarea class="input-field" id="bulkMessage" rows="4" placeholder="Type your message here..."></textarea>
+                    <button class="btn btn-success" onclick="sendBulkMessages()" style="margin-top: 15px; width: 100%;">
+                        🚀 SEND BULK MESSAGES
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Log Console -->
+        <div class="card glass">
+            <div class="card-title">
+                <span>📊 SERVER LOGS</span>
+            </div>
+            <div class="log-console" id="logConsole">
+                <div class="log-entry">
+                    <span class="log-time">[SYSTEM]</span>
+                    <span class="log-info">Facebook Convo Server initialized</span>
+                </div>
+                <div class="log-entry">
+                    <span class="log-time">[SYSTEM]</span>
+                    <span class="log-info">Ready for operations...</span>
+                </div>
+            </div>
         </div>
     </div>
     
+    <!-- Owner Badge -->
+    <div class="owner-badge">
+        <span>👑 AHMAD ALI (RDX) • PREMIUM VIP</span>
+    </div>
+    
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script>
-        let startTime = Date.now();
-        let displayedLogs = new Set();
+        const socket = io();
+        let currentToken = '';
+        let selectedConversations = new Set();
+        let messagesSent = 0;
         
-        setInterval(updateStats, 2000);
-        setInterval(uptimeCounter, 1000);
-        
-        function switchTab(tab) {
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.getElementById('tab-' + tab).classList.add('active');
-            event.target.classList.add('active');
-        }
-        
-        function toggleTokenInput() {
-            const type = document.getElementById('tokenType').value;
-            document.getElementById('singleTokenDiv').style.display = type === 'single' ? 'block' : 'none';
-            document.getElementById('tokenFileDiv').style.display = type === 'file' ? 'block' : 'none';
-        }
-        
-        function handleFileSelect(input, type) {
-            const box = type === 'token' ? document.getElementById('tokenFileBox') : document.getElementById('msgFileBox');
-            const nameSpan = type === 'token' ? document.getElementById('tokenFileName') : document.getElementById('msgFileName');
-            
-            if (input.files.length > 0) {
-                nameSpan.textContent = '📎 ' + input.files[0].name;
-                box.classList.add('selected');
-                showAlert('✅ Selected: ' + input.files[0].name, 'success');
-            }
-        }
-        
-        document.getElementById('extractForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const email = document.getElementById('extEmail').value;
-            const pass = document.getElementById('extPass').value;
-            const btn = document.getElementById('extractBtn');
-            const btnText = document.getElementById('extractBtnText');
-            
-            btn.disabled = true;
-            btnText.innerHTML = '<span class="spinner"></span> Extracting...';
-            
-            const formData = new FormData();
-            formData.append('email', email);
-            formData.append('password', pass);
-            
-            try {
-                const resp = await fetch('/api/extract', { method: 'POST', body: formData });
-                const data = await resp.json();
-                
-                if (data.ok) {
-                    document.getElementById('extractedToken').textContent = data.token;
-                    document.getElementById('tokenResult').style.display = 'block';
-                    document.getElementById('singleToken').value = data.token;
-                    showAlert('✅ Token extracted!', 'success');
-                    addConsoleLine('success', '✅ Token extracted');
-                } else {
-                    showAlert('❌ ' + data.error, 'error');
-                }
-            } catch (err) {
-                showAlert('❌ Network error', 'error');
-            } finally {
-                btn.disabled = false;
-                btnText.textContent = '🔓 Extract Token';
-            }
+        // Socket Events
+        socket.on('connect', () => {
+            addLog('Connected to server', 'success');
         });
         
-        document.getElementById('sendForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
+        socket.on('server_started', (data) => {
+            addLog(`Server started with ${data.thread_count} threads`, 'success');
+            updateServerStatus(true);
+        });
+        
+        socket.on('server_stopped', (data) => {
+            addLog('Server stopped', 'warning');
+            updateServerStatus(false);
+        });
+        
+        socket.on('worker_update', (data) => {
+            addLog(`Worker ${data.worker_id} processing task`, 'info');
+        });
+        
+        socket.on('status_update', (data) => {
+            document.getElementById('activeTokens').textContent = data.active_tokens || 0;
+            document.getElementById('queueSize').textContent = data.queue_size || 0;
+        });
+        
+        // Helper Functions
+        function addLog(message, type = 'info') {
+            const console = document.getElementById('logConsole');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
             
-            const btn = document.getElementById('startBtn');
-            const btnText = document.getElementById('startBtnText');
-            btn.disabled = true;
-            btnText.innerHTML = '<span class="spinner"></span> Starting...';
+            const time = new Date().toLocaleTimeString();
+            entry.innerHTML = `
+                <span class="log-time">[${time}]</span>
+                <span class="log-${type}">${message}</span>
+            `;
             
-            const formData = new FormData();
+            console.appendChild(entry);
+            console.scrollTop = console.scrollHeight;
             
-            const tokenType = document.getElementById('tokenType').value;
-            formData.append('token_type', tokenType);
+            // Keep only last 50 logs
+            if (console.children.length > 50) {
+                console.removeChild(console.firstChild);
+            }
+        }
+        
+        function updateServerStatus(running) {
+            const pulse = document.getElementById('serverPulse');
+            const statusText = document.getElementById('serverStatusText');
+            const startBtn = document.getElementById('startServerBtn');
+            const stopBtn = document.getElementById('stopServerBtn');
             
-            if (tokenType === 'single') {
-                formData.append('token', document.getElementById('singleToken').value);
+            if (running) {
+                pulse.classList.add('active');
+                statusText.textContent = 'Server Online';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
             } else {
-                formData.append('token_file', document.getElementById('tokenFile').files[0]);
+                pulse.classList.remove('active');
+                statusText.textContent = 'Server Offline';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+        
+        function updateMessagesSent(count) {
+            messagesSent += count;
+            document.getElementById('messagesSent').textContent = messagesSent;
+        }
+        
+        // API Functions
+        async function extractToken() {
+            const email = document.getElementById('emailInput').value;
+            const password = document.getElementById('passwordInput').value;
+            const btn = document.getElementById('extractBtnText');
+            
+            if (!email || !password) {
+                addLog('Please enter email and password', 'error');
+                return;
             }
             
-            formData.append('thread_id', document.getElementById('threadId').value);
-            formData.append('prefix', document.getElementById('prefix').value);
-            formData.append('delay', document.getElementById('delay').value);
-            formData.append('msg_file', document.getElementById('msgFile').files[0]);
+            btn.innerHTML = '<span class="spinner"></span> Extracting...';
+            addLog('Extracting token...', 'info');
             
             try {
-                const resp = await fetch('/api/start', { method: 'POST', body: formData });
-                const data = await resp.json();
+                const response = await fetch('/api/extract_token', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email, password})
+                });
                 
-                if (data.ok) {
-                    showAlert('✅ Task started! ID: ' + data.task_id, 'success');
-                    addConsoleLine('success', '✅ Task ' + data.task_id + ' started');
-                    switchTab('monitor');
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentToken = data.token;
+                    document.getElementById('tokenDisplay').style.display = 'block';
+                    document.getElementById('tokenDisplay').textContent = data.token;
+                    document.getElementById('serverTokenInput').value = data.token;
+                    addLog(`Token extracted successfully for ${data.user_info.name}`, 'success');
                 } else {
-                    showAlert('❌ ' + data.error, 'error');
+                    addLog(`Token extraction failed: ${data.error}`, 'error');
                 }
-            } catch (err) {
-                showAlert('❌ Failed to start', 'error');
+            } catch (error) {
+                addLog(`Error: ${error.message}`, 'error');
             } finally {
-                btn.disabled = false;
-                btnText.textContent = '🚀 START SENDING';
+                btn.textContent = 'Extract Token';
             }
-        });
-        
-        async function stopAllTasks() {
-            try {
-                await fetch('/api/stop_all', { method: 'POST' });
-                showAlert('✅ All tasks stopped', 'success');
-                addConsoleLine('warning', '⏹️ All tasks stopped');
-            } catch (err) {}
         }
         
-        async function updateStats() {
+        async function startServer() {
+            const token = document.getElementById('serverTokenInput').value;
+            const threads = parseInt(document.getElementById('threadCountInput').value);
+            
+            if (!token) {
+                addLog('Please enter an access token', 'error');
+                return;
+            }
+            
+            addLog('Starting server...', 'info');
+            document.getElementById('serverProgress').style.display = 'block';
+            
             try {
-                const resp = await fetch('/api/status');
-                const tasks = await resp.json();
+                const response = await fetch('/api/start_server', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({token, threads})
+                });
                 
-                let total = 0, active = 0, success = 0;
-                for (let [id, task] of Object.entries(tasks)) {
-                    total += task.total || 0;
-                    success += task.success || 0;
-                    if (task.status === 'running') active++;
-                    
-                    if (task.logs) {
-                        task.logs.slice(-3).forEach(log => {
-                            const key = log.time + log.msg;
-                            if (!displayedLogs.has(key)) {
-                                displayedLogs.add(key);
-                                addConsoleLine(log.status || 'info', '[' + log.time + '] ' + log.msg);
-                            }
-                        });
-                    }
+                const data = await response.json();
+                
+                if (data.success) {
+                    addLog(`Server started: ${data.message}`, 'success');
+                    currentToken = token;
+                } else {
+                    addLog(`Failed to start server: ${data.error}`, 'error');
                 }
+            } catch (error) {
+                addLog(`Error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('serverProgress').style.display = 'none';
+            }
+        }
+        
+        async function stopServer() {
+            addLog('Stopping server...', 'warning');
+            
+            try {
+                const response = await fetch('/api/stop_server', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
                 
-                document.getElementById('totalMsg').textContent = total;
-                document.getElementById('activeTasks').textContent = active;
-                document.getElementById('successMsg').textContent = success;
-            } catch (err) {}
+                const data = await response.json();
+                
+                if (data.success) {
+                    addLog(data.message, 'success');
+                } else {
+                    addLog(`Failed to stop server: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                addLog(`Error: ${error.message}`, 'error');
+            }
         }
         
-        function uptimeCounter() {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            const mins = Math.floor(elapsed / 60);
-            const secs = elapsed % 60;
-            document.getElementById('uptime').textContent = 
-                String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+        async function loadConversations() {
+            if (!currentToken) {
+                addLog('Please extract or enter a token first', 'error');
+                return;
+            }
+            
+            addLog('Loading conversations...', 'info');
+            
+            try {
+                const response = await fetch('/api/get_conversations', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({token: currentToken, limit: 50})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayConversations(data.conversations);
+                    addLog(`Loaded ${data.total} conversations`, 'success');
+                } else {
+                    addLog(`Failed to load conversations: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                addLog(`Error: ${error.message}`, 'error');
+            }
         }
         
-        function addConsoleLine(type, msg) {
-            const consoleDiv = document.getElementById('console');
-            const line = document.createElement('div');
-            line.className = 'console-line ' + (type || '');
-            line.textContent = msg;
-            consoleDiv.appendChild(line);
-            consoleDiv.scrollTop = consoleDiv.scrollHeight;
-            if (consoleDiv.children.length > 30) consoleDiv.removeChild(consoleDiv.firstChild);
+        function displayConversations(conversations) {
+            const container = document.getElementById('conversationsList');
+            container.innerHTML = '';
+            
+            conversations.forEach(conv => {
+                const div = document.createElement('div');
+                div.className = 'conv-item';
+                div.onclick = () => toggleConversation(conv.id, div);
+                
+                const participants = conv.participants.map(p => p.name).join(', ');
+                div.innerHTML = `
+                    <div style="font-weight: 600; margin-bottom: 5px;">${participants}</div>
+                    <div style="font-size: 12px; color: #8892B0;">${conv.snippet || 'No messages'}</div>
+                `;
+                
+                container.appendChild(div);
+            });
         }
         
-        function clearConsole() {
-            document.getElementById('console').innerHTML = 
-                '<div class="console-line">🚀 Console cleared</div>' +
-                '<div class="console-line success">✅ Ready</div>';
+        function toggleConversation(id, element) {
+            if (selectedConversations.has(id)) {
+                selectedConversations.delete(id);
+                element.classList.remove('selected');
+            } else {
+                selectedConversations.add(id);
+                element.classList.add('selected');
+            }
         }
         
-        function showAlert(msg, type) {
-            const box = document.getElementById('alertBox');
-            const alert = document.createElement('div');
-            alert.className = 'alert alert-' + type;
-            alert.textContent = msg;
-            box.appendChild(alert);
-            alert.style.display = 'block';
-            setTimeout(() => alert.remove(), 3000);
+        async function sendBulkMessages() {
+            const message = document.getElementById('bulkMessage').value;
+            
+            if (!currentToken) {
+                addLog('Please extract or enter a token first', 'error');
+                return;
+            }
+            
+            if (selectedConversations.size === 0) {
+                addLog('Please select at least one conversation', 'error');
+                return;
+            }
+            
+            if (!message) {
+                addLog('Please enter a message', 'error');
+                return;
+            }
+            
+            const threadIds = Array.from(selectedConversations);
+            addLog(`Sending bulk messages to ${threadIds.length} conversations...`, 'info');
+            
+            try {
+                const response = await fetch('/api/send_bulk', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        token: currentToken,
+                        thread_ids: threadIds,
+                        message: message
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    addLog(`Messages sent: ${data.sent} successful, ${data.failed} failed`, 'success');
+                    updateMessagesSent(data.sent);
+                    selectedConversations.clear();
+                    document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('selected'));
+                } else {
+                    addLog(`Failed to send messages: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                addLog(`Error: ${error.message}`, 'error');
+            }
         }
         
-        function copyToken() {
-            const token = document.getElementById('extractedToken').textContent;
-            navigator.clipboard.writeText(token).then(() => showAlert('✅ Copied!', 'success'));
-        }
+        // Initialize
+        addLog('Welcome to AHMII FB Convo Server', 'success');
+        addLog('Premium VIP Edition • Owner: AHMAD ALI (RDX)', 'info');
     </script>
 </body>
 </html>
 '''
 
-if __name__ == '__main__':
-    print("\n" + "="*50)
-    print("🔥 FB MASTER PRO 2026 - PAGE API METHOD 🔥")
-    print("="*50)
-    print("✅ Open: http://localhost:5000")
-    print("✅ USE PAGE ACCESS TOKEN (EAA...)")
-    print("="*50 + "\n")
-    app.run(host='0.0.0.0', port=5000, debug=False)
+# Main execution
+if __name__ == "__main__":
+    # Create templates directory and save HTML
+    os.makedirs('templates', exist_ok=True)
+    with open('templates/index.html', 'w', encoding='utf-8') as f:
+        f.write(HTML_TEMPLATE)
+    
+    # Start server
+    server = FacebookConvoServer()
+    
+    print("""
+    ╔══════════════════════════════════════════════════════════╗
+    ║                                                          ║
+    ║     █████╗ ██╗  ██╗███╗   ███╗██╗██╗                    ║
+    ║    ██╔══██╗██║  ██║████╗ ████║██║██║                    ║
+    ║    ███████║███████║██╔████╔██║██║██║                    ║
+    ║    ██╔══██║██╔══██║██║╚██╔╝██║██║██║                    ║
+    ║    ██║  ██║██║  ██║██║ ╚═╝ ██║██║██║                    ║
+    ║    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝                    ║
+    ║                                                          ║
+    ║           FB CONVO SERVER • PREMIUM EDITION              ║
+    ║                    OWNER: AHMAD ALI (RDX)                ║
+    ║                                                          ║
+    ╚══════════════════════════════════════════════════════════╝
+    
+    🌐 Server running at: http://localhost:5000
+    📱 Open your browser to access the web interface
+    
+    Press Ctrl+C to stop the server
+    """)
+    
+    try:
+        server.run(host='0.0.0.0', port=5000)
+    except KeyboardInterrupt:
+        print("\n\n\033[91m[!] Server stopped by user\033[0m")
+        sys.exit(0)
