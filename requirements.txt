@@ -1,2 +1,142 @@
-Flask 
-requests
+# Core Framework
+Flask==2.3.3
+Werkzeug==2.3.7
+
+# Network & Web Requests
+requests==2.31.0
+urllib3==2.0.7
+dnspython==2.4.2
+python-whois==0.8.0
+socket==0.0.1
+
+# Security & Cryptography
+cryptography==41.0.7
+pycryptodome==3.19.0
+bcrypt==4.1.1
+passlib==1.7.4
+
+# Image & QR Code Generation
+Pillow==10.1.0
+qrcode==7.4.2
+python-barcode==0.15.1
+
+# Data Processing
+pandas==2.1.3
+numpy==1.24.3
+openpyxl==3.1.2
+
+# JSON & XML Processing
+xmltodict==0.13.0
+dict2xml==1.7.4
+json5==0.9.14
+
+# Email & Communication
+secure-smtplib==0.1.1
+email-validator==2.1.0
+
+# Database Support (Optional)
+sqlalchemy==2.0.23
+pymongo==4.5.0
+redis==5.0.1
+
+# Development & Debugging
+python-dotenv==1.0.0
+colorama==0.4.6
+tqdm==4.66.1
+
+# Additional Utilities
+fake-useragent==1.4.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
+cssutils==2.10.0
+pygments==2.17.2
+
+# Async Support
+aiohttp==3.9.1
+asyncio==3.4.3
+
+# IP & Geolocation
+geoip2==4.7.0
+ipaddress==1.0.23
+ip2geotools==0.1.6
+
+# DNS & Network Tools
+dns.resolver==2.4.2
+netaddr==0.9.0
+scapy==2.5.0
+
+# Port Scanner
+python-nmap==0.7.1
+socket==0.0.1
+
+# WHOIS
+python-whois==0.8.0
+
+# SSL Certificate
+certifi==2023.11.17
+ssl==1.16
+
+# Compression
+zlib==0.2.1
+
+# QR Code
+qrcode==7.4.2
+pillow==10.1.0
+
+# Barcode
+python-barcode==0.15.1
+
+# Color Generation
+colour==0.1.5
+
+# Text Processing
+textblob==0.17.1
+nltk==3.8.1
+
+# Random Data Generation
+faker==20.1.0
+mimesis==11.1.0
+
+# Time & Date
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Markdown & Formatting
+markdown==3.5.1
+mistune==3.0.2
+
+# File Handling
+pyftpdlib==1.5.9
+watchdog==3.0.0
+
+# Logging & Monitoring
+loguru==0.7.2
+
+# Session Management
+flask-session==0.5.0
+itsdangerous==2.1.2
+
+# CORS Support
+flask-cors==4.0.0
+
+# Rate Limiting
+flask-limiter==3.5.0
+
+# Caching
+flask-caching==2.1.0
+
+# API Documentation
+flask-restx==1.2.0
+
+# Background Tasks
+celery==5.3.4
+redis==5.0.1
+
+# Testing (Development)
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Code Quality (Development)
+black==23.11.0
+flake8==6.1.0
+pylint==3.0.3
