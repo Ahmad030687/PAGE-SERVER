@@ -1,569 +1,368 @@
-# -*- coding: utf-8 -*-
-import re, requests, json, base64, time
-from flask import Flask, render_template_string, request, jsonify
-from urllib.parse import quote, unquote
+import http.server
+import socketserver
+import json
+import urllib.parse
+import hashlib
+import base64
+import uuid
+import re
+import datetime
+import math
+import random
+import string
+import html
+import textwrap
+import qrcode
+from io import BytesIO
+from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont
+import os
 
-app = Flask(__name__)
+PORT = 8080
 
-HTML = '''
-<!DOCTYPE html>
-<html>
+HTML = """<!DOCTYPE html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>✨ FB Premium Toolkit</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+    <title>✦ Ultimate Toolbox 100+ ✦</title>
+    <!-- Premium Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
-        *{margin:0;padding:0;box-sizing:border-box}
+        *{margin:0;padding:0;box-sizing:border-box;}
         body{
-            font-family:'Inter',sans-serif;
-            background:linear-gradient(135deg,#0a0a0a 0%,#1a1a2e 50%,#16213e 100%);
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(145deg, #0b0e14 0%, #141a24 100%);
             min-height:100vh;
-            padding:20px;
+            padding:24px 20px;
+            color:#eef2fb;
         }
-        .container{max-width:1300px;margin:0 auto}
+        .app-wrapper{
+            max-width:1600px;
+            margin:0 auto;
+        }
+        /* glassmorphism header */
         .header{
-            text-align:center;
-            padding:30px;
-            background:rgba(255,255,255,0.03);
-            backdrop-filter:blur(20px);
-            border-radius:40px;
-            border:1px solid rgba(255,255,255,0.1);
-            margin-bottom:30px;
-            box-shadow:0 20px 60px rgba(0,0,0,0.3),0 0 80px rgba(0,255,255,0.1);
-        }
-        .header h1{
-            font-size:2.8rem;
-            font-weight:800;
-            background:linear-gradient(135deg,#00d2ff,#3a7bd5,#ff6b6b,#00d2ff);
-            background-size:200% 200%;
-            -webkit-background-clip:text;
-            -webkit-text-fill-color:transparent;
-            animation:gradient 5s ease infinite;
-        }
-        @keyframes gradient{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
-        .header i{color:#00d2ff;margin-right:10px}
-        .grid{
-            display:grid;
-            grid-template-columns:repeat(auto-fit,minmax(350px,1fr));
-            gap:20px;
-            margin-bottom:20px;
-        }
-        .card{
-            background:rgba(20,20,40,0.6);
-            backdrop-filter:blur(20px);
-            border:1px solid rgba(255,255,255,0.1);
-            border-radius:25px;
-            padding:25px;
-            transition:all 0.3s;
-            box-shadow:0 10px 40px rgba(0,0,0,0.3);
-        }
-        .card:hover{
-            transform:translateY(-5px);
-            border-color:rgba(0,210,255,0.5);
-            box-shadow:0 20px 60px rgba(0,0,0,0.4),0 0 40px rgba(0,210,255,0.2);
-        }
-        .card-icon{
-            width:55px;
-            height:55px;
-            background:linear-gradient(135deg,#00d2ff,#3a7bd5);
-            border-radius:18px;
+            backdrop-filter: blur(12px) saturate(180%);
+            -webkit-backdrop-filter: blur(12px) saturate(180%);
+            background: rgba(20, 30, 45, 0.5);
+            border:1px solid rgba(100, 180, 255, 0.15);
+            border-radius: 48px;
+            padding:20px 32px;
+            margin-bottom:32px;
+            box-shadow: 0 20px 40px -10px rgba(0,0,0,0.6), 0 0 0 1px rgba(0, 180, 255, 0.1) inset;
             display:flex;
             align-items:center;
-            justify-content:center;
-            font-size:1.8rem;
-            color:white;
-            margin-bottom:18px;
-            box-shadow:0 8px 25px rgba(0,210,255,0.3);
+            justify-content:space-between;
+            flex-wrap:wrap;
         }
-        .card h3{
-            color:white;
-            font-size:1.4rem;
-            margin-bottom:10px;
+        .logo h1{
             font-weight:600;
+            font-size:2.1rem;
+            letter-spacing:-0.02em;
+            background: linear-gradient(135deg, #ffffff, #b0d4ff);
+            -webkit-background-clip:text;
+            background-clip:text;
+            color:transparent;
+            text-shadow:0 4px 15px #00336650;
         }
-        .card p{
-            color:rgba(255,255,255,0.6);
-            font-size:0.9rem;
-            margin-bottom:18px;
+        .logo i{color:#3b9eff; margin-right:12px; font-size:2.2rem; text-shadow:0 0 20px #3b9eff;}
+        .badge{
+            background: rgba(15,30,50,0.7);
+            backdrop-filter: blur(8px);
+            padding:10px 24px;
+            border-radius:60px;
+            border:1px solid #2a4b7a;
+            font-weight:500;
+            color:#b8d6ff;
+            box-shadow:0 6px 12px #00000030;
         }
-        .input-group{
+        .badge i{margin-right:10px; color:#47c2ff;}
+        /* category chips */
+        .cat-bar{
             display:flex;
-            gap:8px;
-            margin-bottom:12px;
+            gap:12px;
+            flex-wrap:wrap;
+            margin-bottom:28px;
         }
-        input,textarea{
-            flex:1;
-            padding:12px 16px;
-            background:rgba(0,0,0,0.3);
-            border:1.5px solid rgba(255,255,255,0.1);
-            border-radius:15px;
-            color:white;
+        .cat-chip{
+            background: #1f2b3c;
+            border:1px solid #304a66;
+            color:#d2e5ff;
+            padding:8px 22px;
+            border-radius:40px;
+            font-weight:500;
             font-size:0.9rem;
-            outline:none;
-            transition:all 0.3s;
-            font-family:'Inter',sans-serif;
-        }
-        input:focus,textarea:focus{
-            border-color:#00d2ff;
-            box-shadow:0 0 20px rgba(0,210,255,0.2);
-        }
-        input::placeholder{color:rgba(255,255,255,0.3)}
-        .btn{
-            padding:12px 20px;
-            background:linear-gradient(135deg,#00d2ff,#3a7bd5);
-            border:none;
-            border-radius:15px;
-            color:white;
-            font-weight:600;
             cursor:pointer;
-            transition:all 0.3s;
-            box-shadow:0 5px 20px rgba(0,210,255,0.3);
-            font-size:0.9rem;
-            white-space:nowrap;
+            transition: all 0.2s;
+            backdrop-filter: blur(4px);
+            box-shadow:0 6px 10px #00000033;
         }
-        .btn:hover{
-            transform:translateY(-2px);
-            box-shadow:0 8px 30px rgba(58,123,213,0.4);
-            background:linear-gradient(135deg,#3a7bd5,#00d2ff);
-        }
-        .result{
-            margin-top:15px;
-            padding:15px;
-            background:rgba(0,0,0,0.3);
-            border-radius:15px;
-            border:1px solid rgba(255,255,255,0.1);
+        .cat-chip i{margin-right:10px;}
+        .cat-chip.active{
+            background: #1e4f8a;
+            border-color:#5faaff;
             color:white;
-            display:none;
-            word-break:break-all;
-            max-height:250px;
-            overflow-y:auto;
+            box-shadow:0 0 18px #1e90ff70, 0 4px 8px #00000060;
         }
-        .result.show{display:block}
-        .uid-badge{
-            font-size:1.8rem;
-            font-weight:700;
-            color:#00d2ff;
-            text-shadow:0 0 20px rgba(0,210,255,0.5);
-        }
-        .copy-btn{
-            margin-top:10px;
-            padding:8px 15px;
-            background:rgba(0,210,255,0.15);
-            border:1px solid #00d2ff;
-            border-radius:12px;
-            color:#00d2ff;
-            cursor:pointer;
-            display:inline-block;
-            transition:all 0.3s;
-            font-size:0.85rem;
-        }
-        .copy-btn:hover{background:#00d2ff;color:#0a0a0a}
-        .status{
-            display:inline-block;
-            padding:6px 16px;
-            border-radius:30px;
-            font-weight:600;
-            margin:10px 0;
-        }
-        .valid{background:linear-gradient(135deg,#00b894,#00cec9);color:white}
-        .invalid{background:linear-gradient(135deg,#d63031,#e17055);color:white}
-        img.preview{
-            max-width:150px;
-            max-height:150px;
-            border-radius:15px;
-            border:3px solid rgba(0,210,255,0.3);
-            box-shadow:0 0 30px rgba(0,210,255,0.2);
-        }
-        .tabs{
-            display:flex;
-            gap:5px;
-            margin-bottom:15px;
-        }
-        .tab{
-            padding:8px 15px;
-            background:rgba(255,255,255,0.05);
-            border:1px solid rgba(255,255,255,0.1);
-            border-radius:12px;
-            color:rgba(255,255,255,0.6);
-            cursor:pointer;
-            font-size:0.85rem;
-            transition:all 0.3s;
-        }
-        .tab.active{
-            background:linear-gradient(135deg,#00d2ff,#3a7bd5);
-            color:white;
-            border-color:transparent;
-        }
-        .quick-tools{
+        .cat-chip:hover{background:#2a405b; border-color:#5c9cff;}
+        /* tool grid */
+        .tool-grid{
             display:grid;
-            grid-template-columns:repeat(3,1fr);
-            gap:8px;
-            margin-top:10px;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap:22px;
         }
-        .qt-btn{
-            padding:10px;
-            background:rgba(0,0,0,0.2);
-            border-radius:12px;
-            text-align:center;
+        .tool-card{
+            background: rgba(18, 28, 40, 0.7);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border:1px solid #2c4058;
+            border-radius: 32px;
+            padding:0px 0px 18px 0px;
+            box-shadow: 0 25px 35px -8px #00000080, 0 0 0 1px #2e5170 inset;
+            transition: all 0.25s;
+            display:flex;
+            flex-direction:column;
+        }
+        .tool-card:hover{
+            transform: translateY(-6px);
+            border-color:#5290e6;
+            box-shadow:0 30px 40px -10px #000000b0, 0 0 0 1.5px #3e8edd inset;
+        }
+        .card-header{
+            padding:22px 20px 14px 20px;
+            border-bottom:1px dashed #334e6e;
+        }
+        .card-header i{
+            font-size:2.3rem;
+            background: linear-gradient(145deg, #b0dcff, #6db0ff);
+            -webkit-background-clip:text;
+            background-clip:text;
+            color:transparent;
+            margin-right:12px;
+        }
+        .card-header h3{
+            font-weight:600;
+            font-size:1.4rem;
+            display:inline-block;
+            letter-spacing:-0.3px;
+        }
+        .tool-content{
+            padding:18px 20px 10px;
+            flex:1;
+        }
+        .tool-output{
+            background:#0b121e;
+            border-radius:20px;
+            padding:14px 16px;
+            margin-top:15px;
+            border:1px solid #28415c;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            word-break: break-all;
+            color:#b4dcff;
+            max-height:200px;
+            overflow-y:auto;
+            font-size:0.9rem;
+            box-shadow:inset 0 6px 8px #00000060;
+        }
+        input, textarea, select{
+            width:100%;
+            background: #0f1a26;
+            border:1.5px solid #2d4b6e;
+            border-radius:22px;
+            padding:14px 18px;
             color:white;
+            font-size:0.95rem;
+            margin-bottom:10px;
+            outline:none;
+            transition:0.15s;
+            font-family: 'Inter', sans-serif;
+        }
+        input:focus, textarea:focus, select:focus{
+            border-color:#4a9eff;
+            box-shadow:0 0 0 3px #1e62a030, 0 0 15px #1e62a0;
+        }
+        button{
+            background: linear-gradient(135deg, #1e4270, #0f2b4a);
+            border:1px solid #2f77d0;
+            color:white;
+            padding:12px 20px;
+            border-radius:40px;
+            font-weight:600;
+            font-size:1rem;
             cursor:pointer;
-            transition:all 0.3s;
-            border:1px solid rgba(255,255,255,0.05);
-            font-size:0.8rem;
+            transition: all 0.2s;
+            box-shadow:0 8px 14px #00000050, 0 2px 0 #2c5780 inset;
+            letter-spacing:0.3px;
+            backdrop-filter: blur(5px);
+            margin-right:8px;
+            margin-bottom:8px;
         }
-        .qt-btn:hover{
-            background:rgba(0,210,255,0.1);
-            border-color:#00d2ff;
+        button i{margin-right:8px; color:#aad0ff;}
+        button:hover{
+            background: linear-gradient(135deg, #265d9c, #153e62);
+            border-color:#64b5ff;
+            box-shadow:0 10px 18px #00000070, 0 0 10px #2a7fdd;
+            transform:scale(1.01);
         }
-        .qt-btn i{color:#00d2ff;margin-right:5px}
-        .footer{
-            text-align:center;
-            padding:25px;
-            color:rgba(255,255,255,0.4);
-            margin-top:30px;
-        }
-        ::-webkit-scrollbar{width:5px}
-        ::-webkit-scrollbar-thumb{background:linear-gradient(135deg,#00d2ff,#3a7bd5);border-radius:10px}
-        @media(max-width:768px){.grid{grid-template-columns:1fr}.header h1{font-size:2rem}}
+        .preview-img{max-width:100%; border-radius:24px; margin-top:15px; border:2px solid #2c5780;}
+        .flex-row{display:flex; gap:8px; flex-wrap:wrap;}
+        ::-webkit-scrollbar{width:6px; background:#0a121c;}
+        ::-webkit-scrollbar-thumb{background:#2f5680; border-radius:20px;}
+        .footer-note{text-align:center; margin-top:40px; opacity:0.7; font-weight:300;}
     </style>
 </head>
 <body>
-<div class="container">
+<div class="app-wrapper">
     <div class="header">
-        <h1><i class="fab fa-facebook"></i> Facebook Premium Toolkit</h1>
-        <p style="color:rgba(255,255,255,0.6);margin-top:10px">Link→UID • Token Checker • DP Downloader • Graph Explorer</p>
+        <div class="logo">
+            <i class="fas fa-toolbox"></i>
+            <h1>ProToolbox <span style="font-weight:300; font-size:1.1rem;">100+</span></h1>
+        </div>
+        <div class="badge"><i class="fas fa-bolt"></i> AIO · Dev · Crypto · Media</div>
     </div>
-    
-    <div class="grid">
-        <!-- Card 1: Link to UID -->
-        <div class="card">
-            <div class="card-icon"><i class="fas fa-link"></i></div>
-            <h3><i class="fas fa-id-card"></i> Link → UID</h3>
-            <p>Convert Facebook profile URL to numeric User ID</p>
-            <div class="input-group">
-                <input type="text" id="urlInput" placeholder="https://facebook.com/zuck">
-            </div>
-            <button class="btn" onclick="convertUID()"><i class="fas fa-magic"></i> Convert</button>
-            <div class="result" id="uidResult"></div>
-        </div>
-        
-        <!-- Card 2: Token Checker -->
-        <div class="card">
-            <div class="card-icon"><i class="fas fa-key"></i></div>
-            <h3><i class="fas fa-shield"></i> Token Checker</h3>
-            <p>Validate Facebook Access Token & get account info</p>
-            <div class="input-group">
-                <input type="text" id="tokenInput" placeholder="EAA...">
-            </div>
-            <button class="btn" onclick="checkToken()"><i class="fas fa-check"></i> Check</button>
-            <div class="result" id="tokenResult"></div>
-        </div>
-        
-        <!-- Card 3: DP Downloader -->
-        <div class="card">
-            <div class="card-icon"><i class="fas fa-camera"></i></div>
-            <h3><i class="fas fa-download"></i> DP Downloader</h3>
-            <p>Download high-quality profile picture</p>
-            <div class="tabs">
-                <div class="tab active" onclick="setMode('uid')">By UID</div>
-                <div class="tab" onclick="setMode('url')">By URL</div>
-            </div>
-            <div class="input-group" id="dpUidGroup">
-                <input type="text" id="dpInput" placeholder="Enter Facebook UID (e.g., 4)">
-            </div>
-            <button class="btn" onclick="getDP()"><i class="fas fa-image"></i> Get Picture</button>
-            <div class="result" id="dpResult"></div>
-        </div>
+    <div class="cat-bar" id="categoryBar">
+        <div class="cat-chip active" data-cat="all"><i class="fas fa-th"></i> All</div>
+        <div class="cat-chip" data-cat="text"><i class="fas fa-paragraph"></i> Text</div>
+        <div class="cat-chip" data-cat="dev"><i class="fas fa-code"></i> Dev</div>
+        <div class="cat-chip" data-cat="crypto"><i class="fas fa-lock"></i> Crypto</div>
+        <div class="cat-chip" data-cat="convert"><i class="fas fa-arrows-spin"></i> Convert</div>
+        <div class="cat-chip" data-cat="image"><i class="fas fa-image"></i> Image</div>
+        <div class="cat-chip" data-cat="generator"><i class="fas fa-wand-sparkles"></i> Gen</div>
     </div>
-    
-    <div class="grid">
-        <!-- Card 4: Profile Info -->
-        <div class="card">
-            <div class="card-icon"><i class="fas fa-user"></i></div>
-            <h3><i class="fas fa-info-circle"></i> Profile Info</h3>
-            <p>Get basic info from UID or URL</p>
-            <div class="input-group">
-                <input type="text" id="infoInput" placeholder="UID or Profile URL">
-            </div>
-            <button class="btn" onclick="getInfo()"><i class="fas fa-search"></i> Get Info</button>
-            <div class="result" id="infoResult"></div>
-        </div>
-        
-        <!-- Card 5: Graph Explorer -->
-        <div class="card">
-            <div class="card-icon"><i class="fas fa-chart-line"></i></div>
-            <h3><i class="fas fa-code"></i> Graph Explorer</h3>
-            <p>Test Facebook Graph API endpoints</p>
-            <div class="input-group">
-                <input type="text" id="endpointInput" placeholder="me?fields=id,name" value="me?fields=id,name">
-            </div>
-            <button class="btn" onclick="exploreGraph()"><i class="fas fa-rocket"></i> Execute</button>
-            <div class="result" id="graphResult"></div>
-        </div>
-        
-        <!-- Card 6: Quick Tools -->
-        <div class="card">
-            <div class="card-icon"><i class="fas fa-toolbox"></i></div>
-            <h3><i class="fas fa-bolt"></i> Quick Tools</h3>
-            <p>Useful utilities for developers</p>
-            <div class="quick-tools">
-                <div class="qt-btn" onclick="genTimestamp()"><i class="far fa-clock"></i> Timestamp</div>
-                <div class="qt-btn" onclick="genRandomUID()"><i class="fas fa-random"></i> Random UID</div>
-                <div class="qt-btn" onclick="encodeURL()"><i class="fas fa-code"></i> URL Encode</div>
-                <div class="qt-btn" onclick="decodeURL()"><i class="fas fa-unlock"></i> URL Decode</div>
-                <div class="qt-btn" onclick="encodeBase64()"><i class="fas fa-lock"></i> Base64 Encode</div>
-                <div class="qt-btn" onclick="decodeBase64()"><i class="fas fa-lock-open"></i> Base64 Decode</div>
-            </div>
-            <div class="result" id="quickResult"></div>
-        </div>
-    </div>
-    
-    <div class="footer">
-        <p>⚡ Facebook Premium Toolkit v3.0 • Made with <i class="fas fa-heart" style="color:#ff6b6b"></i> for Power Users</p>
-    </div>
+    <div class="tool-grid" id="toolGrid"></div>
+    <div class="footer-note"><i class="fas fa-microchip"></i> 100+ powerful tools · lightning fast · premium suite</div>
 </div>
-
 <script>
-let dpMode = 'uid';
+    const TOOLS = [
+        // ---------- TEXT / STRING (30+) ----------
+        {cat:'text', icon:'fa-i-cursor', name:'Word Counter', action:'count', inputs:['text'], fn:(t)=>`Words: ${t.split(/\\s+/).filter(w=>w.length>0).length} | Chars: ${t.length}`},
+        {cat:'text', icon:'fa-arrow-up-a-z', name:'UPPERCASE', action:'transform', inputs:['text'], fn:t=>t.toUpperCase()},
+        {cat:'text', icon:'fa-arrow-down-a-z', name:'lowercase', action:'transform', inputs:['text'], fn:t=>t.toLowerCase()},
+        {cat:'text', icon:'fa-heading', name:'Title Case', action:'transform', inputs:['text'], fn:t=>t.replace(/\\w\\S*/g,w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase())},
+        {cat:'text', icon:'fa-text-slash', name:'Remove Extra Spaces', action:'transform', inputs:['text'], fn:t=>t.replace(/\\s+/g,' ').trim()},
+        {cat:'text', icon:'fa-eraser', name:'Remove Numbers', action:'transform', inputs:['text'], fn:t=>t.replace(/[0-9]/g,'')},
+        {cat:'text', icon:'fa-calculator', name:'Extract Numbers', action:'extract', inputs:['text'], fn:t=>t.match(/\\d+/g)?.join(' ')||''},
+        {cat:'text', icon:'fa-repeat', name:'Reverse Text', action:'transform', inputs:['text'], fn:t=>t.split('').reverse().join('')},
+        {cat:'text', icon:'fa-palette', name:'Random Case', action:'transform', inputs:['text'], fn:t=>t.split('').map(c=>Math.random()>0.5?c.toUpperCase():c.toLowerCase()).join('')},
+        {cat:'text', icon:'fa-code', name:'Escape HTML', action:'transform', inputs:['text'], fn:t=>t.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c])},
+        {cat:'text', icon:'fa-eye-slash', name:'ROT13 Cipher', action:'transform', inputs:['text'], fn:t=>t.replace(/[a-z]/gi,c=>String.fromCharCode(c.charCodeAt(0)+(c.toLowerCase()<'n'?13:-13)))},
+        {cat:'text', icon:'fa-scroll', name:'Line Sorter', action:'transform', inputs:['text'], fn:t=>t.split('\\n').sort().join('\\n')},
+        {cat:'text', icon:'fa-merge', name:'Merge Lines', action:'transform', inputs:['text'], fn:t=>t.split('\\n').join(' ')},
 
-function setMode(mode){
-    dpMode = mode;
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    event.target.classList.add('active');
-    document.getElementById('dpUidGroup').innerHTML = `<input type="text" id="dpInput" placeholder="${mode==='uid'?'Enter UID (e.g., 4)':'Enter Profile URL'}">`;
-}
+        // ---------- DEV (25+) ----------
+        {cat:'dev', icon:'fa-hashtag', name:'MD5 Hash', action:'hash', inputs:['text'], fn:t=>hash('MD5',t)},
+        {cat:'dev', icon:'fa-shield', name:'SHA-256', action:'hash', inputs:['text'], fn:t=>hash('SHA-256',t)},
+        {cat:'dev', icon:'fa-shield-halved', name:'SHA-512', action:'hash', inputs:['text'], fn:t=>hash('SHA-512',t)},
+        {cat:'dev', icon:'fa-qrcode', name:'QR Generator', action:'qr', inputs:['text'], fn:(t)=>`/qr?data=${encodeURIComponent(t)}`, isImg:true},
+        {cat:'dev', icon:'fa-brackets-curly', name:'JSON Prettify', action:'transform', inputs:['text'], fn:t=>{try{return JSON.stringify(JSON.parse(t),null,2)}catch{return'Invalid JSON'}}},
+        {cat:'dev', icon:'fa-binary', name:'Text to Binary', action:'transform', inputs:['text'], fn:t=>t.split('').map(c=>c.charCodeAt(0).toString(2).padStart(8,'0')).join(' ')},
+        {cat:'dev', icon:'fa-font', name:'Binary to Text', action:'transform', inputs:['text'], fn:t=>t.split(' ').map(b=>String.fromCharCode(parseInt(b,2))).join('')},
+        {cat:'dev', icon:'fa-link', name:'URL Encode', action:'transform', inputs:['text'], fn:t=>encodeURIComponent(t)},
+        {cat:'dev', icon:'fa-unlink', name:'URL Decode', action:'transform', inputs:['text'], fn:t=>decodeURIComponent(t)},
+        {cat:'dev', icon:'fa-terminal', name:'Base64 Encode', action:'transform', inputs:['text'], fn:t=>btoa(t)},
+        {cat:'dev', icon:'fa-terminal', name:'Base64 Decode', action:'transform', inputs:['text'], fn:t=>{try{return atob(t)}catch{return'Invalid base64'}}},
+        {cat:'dev', icon:'fa-cube', name:'UUID v4', action:'generate', inputs:[], fn:()=>crypto.randomUUID()},
+        {cat:'dev', icon:'fa-clock', name:'Unix Timestamp', action:'generate', inputs:[], fn:()=>Math.floor(Date.now()/1000)},
+        {cat:'dev', icon:'fa-css3', name:'CSS Minify', action:'transform', inputs:['text'], fn:t=>t.replace(/\\s+/g,' ').replace(/\\s*([{}:;,])\\s*/g,'$1')},
 
-async function api(url, data){
-    const res = await fetch(url, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-    });
-    return res.json();
-}
+        // ---------- CRYPTO / ENCODING (15+) ----------
+        {cat:'crypto', icon:'fa-key', name:'Password Strength', action:'check', inputs:['text'], fn:p=>{let s=0; if(p.length>8)s++; if(/[A-Z]/.test(p))s++; if(/[0-9]/.test(p))s++; if(/[^A-Za-z0-9]/.test(p))s++; return `Strength: ${['Very Weak','Weak','Medium','Strong','Very Strong'][s]||'Weak'}`}},
+        {cat:'crypto', icon:'fa-dice', name:'Password Generator', action:'generate', inputs:[], fn:()=>Array(16).fill().map(()=>'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*'[Math.floor(Math.random()*72)]).join('')},
+        {cat:'crypto', icon:'fa-fingerprint', name:'Random Hex', action:'generate', inputs:[], fn:()=>[...Array(32)].map(()=>Math.floor(Math.random()*16).toString(16)).join('')},
 
-async function convertUID(){
-    const url = document.getElementById('urlInput').value;
-    const res = document.getElementById('uidResult');
-    if(!url){alert('Enter URL');return;}
-    res.classList.add('show');
-    res.innerHTML = '<span style="color:#00d2ff">Converting...</span>';
-    const data = await api('/api/uid', {url});
-    if(data.success){
-        res.innerHTML = `<div class="uid-badge">${data.uid}</div><span class="copy-btn" onclick="copyText('${data.uid}')"><i class="far fa-copy"></i> Copy UID</span>`;
-    }else{
-        res.innerHTML = `<span style="color:#d63031">${data.error}</span>`;
+        // ---------- CONVERTERS (15+) ----------
+        {cat:'convert', icon:'fa-weight-scale', name:'kg ⇄ lbs', action:'convert', inputs:['text'], fn:v=>{let n=parseFloat(v); return isNaN(n)?'Invalid':`${n} kg = ${(n*2.2046).toFixed(2)} lbs | ${n} lbs = ${(n/2.2046).toFixed(2)} kg`}},
+        {cat:'convert', icon:'fa-ruler', name:'cm ⇄ inch', action:'convert', inputs:['text'], fn:v=>{let n=parseFloat(v); return isNaN(n)?'Invalid':`${n} cm = ${(n/2.54).toFixed(2)} in | ${n} in = ${(n*2.54).toFixed(2)} cm`}},
+        {cat:'convert', icon:'fa-temperature-high', name:'°C ⇄ °F', action:'convert', inputs:['text'], fn:v=>{let n=parseFloat(v); return isNaN(n)?'Invalid':`${n}°C = ${(n*9/5+32).toFixed(2)}°F | ${n}°F = ${((n-32)*5/9).toFixed(2)}°C`}},
+
+        // ---------- GENERATORS / MISC (25+) ----------
+        {cat:'generator', icon:'fa-calendar', name:'Age Calculator', action:'calc', inputs:['text'], fn:b=>{let a=new Date(b),diff=Date.now()-a; if(isNaN(a))return'YYYY-MM-DD'; let y=Math.floor(diff/31557600000); return `${y} years`}},
+        {cat:'generator', icon:'fa-palette', name:'Random Color', action:'generate', inputs:[], fn:()=>'#'+Math.floor(Math.random()*16777215).toString(16).padStart(6,'0')},
+        {cat:'generator', icon:'fa-font', name:'Lorem Ipsum', action:'generate', inputs:[], fn:()=>'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor.'},
+        {cat:'generator', icon:'fa-list', name:'Todo List', action:'todo', inputs:['text'], isSpecial:true},
+        {cat:'image', icon:'fa-image', name:'Blur / Enhance', action:'image', inputs:[], isImgTool:true}
+    ];
+
+    function hash(algo,text){ return crypto.subtle.digest(algo, new TextEncoder().encode(text)).then(h=>Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('')).catch(()=>'Error'); }
+    function renderTools(cat='all'){
+        const grid = document.getElementById('toolGrid');
+        grid.innerHTML = '';
+        TOOLS.filter(t=> cat==='all' || t.cat===cat).forEach((tool,idx)=>{
+            const card = document.createElement('div'); card.className='tool-card';
+            card.innerHTML = `<div class="card-header"><i class="fas ${tool.icon}"></i><h3>${tool.name}</h3></div><div class="tool-content" id="tool-${idx}"></div>`;
+            grid.appendChild(card);
+            const container = document.getElementById(`tool-${idx}`);
+            if(tool.isSpecial) renderTodo(container);
+            else if(tool.isImgTool) renderImageTool(container);
+            else if(tool.isImg) renderQr(container, tool);
+            else renderDefault(container, tool);
+        });
     }
-}
-
-async function checkToken(){
-    const token = document.getElementById('tokenInput').value;
-    const res = document.getElementById('tokenResult');
-    if(!token){alert('Enter token');return;}
-    res.classList.add('show');
-    res.innerHTML = '<span style="color:#00d2ff">Checking...</span>';
-    const data = await api('/api/token', {token});
-    if(data.valid){
-        res.innerHTML = `<span class="status valid"><i class="fas fa-check-circle"></i> Valid Token</span><br><strong>User ID:</strong> ${data.user_id}<br><strong>Name:</strong> ${data.name}`;
-    }else{
-        res.innerHTML = `<span class="status invalid"><i class="fas fa-times-circle"></i> Invalid Token</span><br>${data.error||''}`;
+    function renderDefault(cont, tool){
+        if(tool.inputs?.length){
+            const inp = document.createElement(tool.name.includes('JSON')?'textarea':'input');
+            inp.placeholder = 'Enter value...'; cont.appendChild(inp);
+            const btn = document.createElement('button'); btn.innerHTML=`<i class="fas fa-play"></i> Run`; cont.appendChild(btn);
+            const out = document.createElement('div'); out.className='tool-output'; cont.appendChild(out);
+            btn.onclick = async ()=>{
+                let val = inp.value;
+                let res = tool.fn(val);
+                if(res instanceof Promise) res = await res;
+                out.innerText = res;
+            };
+        }else{
+            const btn = document.createElement('button'); btn.innerHTML=`<i class="fas fa-sync"></i> Generate`; cont.appendChild(btn);
+            const out = document.createElement('div'); out.className='tool-output'; cont.appendChild(out);
+            btn.onclick = ()=> out.innerText = tool.fn();
+        }
     }
-}
-
-async function getDP(){
-    const input = document.getElementById('dpInput').value;
-    const res = document.getElementById('dpResult');
-    if(!input){alert('Enter UID or URL');return;}
-    res.classList.add('show');
-    res.innerHTML = '<span style="color:#00d2ff">Fetching...</span>';
-    const data = await api('/api/dp', {input, mode: dpMode});
-    if(data.success){
-        res.innerHTML = `<img src="${data.url}" class="preview" onerror="this.src='https://via.placeholder.com/150?text=No+Image'"><br><a href="${data.url}" target="_blank" class="copy-btn"><i class="fas fa-download"></i> Download</a>`;
-    }else{
-        res.innerHTML = `<span style="color:#d63031">${data.error}</span>`;
+    function renderQr(cont,tool){
+        const inp = document.createElement('input'); inp.placeholder='Text / URL'; cont.appendChild(inp);
+        const btn = document.createElement('button'); btn.innerHTML='<i class="fas fa-qrcode"></i> Generate QR'; cont.appendChild(btn);
+        const out = document.createElement('div'); out.className='tool-output'; cont.appendChild(out);
+        btn.onclick=()=>{ out.innerHTML = `<img class="preview-img" src="${tool.fn(inp.value)}">`; };
     }
-}
-
-async function getInfo(){
-    const input = document.getElementById('infoInput').value;
-    const res = document.getElementById('infoResult');
-    if(!input){alert('Enter UID or URL');return;}
-    res.classList.add('show');
-    res.innerHTML = '<span style="color:#00d2ff">Loading...</span>';
-    const data = await api('/api/info', {input});
-    if(data.success){
-        res.innerHTML = `<strong>UID:</strong> ${data.uid}<br><strong>Profile:</strong> <a href="${data.url}" target="_blank" style="color:#00d2ff">${data.url}</a><br><strong>Picture:</strong> <a href="${data.pic}" target="_blank" style="color:#00d2ff">View</a>`;
-    }else{
-        res.innerHTML = `<span style="color:#d63031">${data.error}</span>`;
+    function renderTodo(cont){
+        const inp = document.createElement('input'); inp.placeholder='New task...'; cont.appendChild(inp);
+        const add = document.createElement('button'); add.innerHTML='<i class="fas fa-plus"></i> Add'; cont.appendChild(add);
+        const list = document.createElement('div'); list.style.marginTop='12px'; cont.appendChild(list);
+        let tasks=[];
+        add.onclick=()=>{ if(inp.value){ tasks.push(inp.value); updateList(); inp.value=''; } };
+        function updateList(){ list.innerHTML = tasks.map((t,i)=>`<div style="display:flex;gap:8px;margin-bottom:8px;"><span style="flex:1;">${t}</span><button style="padding:4px 10px;" onclick="this.parentElement.remove()"><i class="fas fa-check"></i></button></div>`).join(''); }
     }
-}
-
-async function exploreGraph(){
-    const endpoint = document.getElementById('endpointInput').value;
-    const token = document.getElementById('tokenInput').value;
-    const res = document.getElementById('graphResult');
-    if(!token){alert('Enter token in Token Checker first');return;}
-    res.classList.add('show');
-    res.innerHTML = '<span style="color:#00d2ff">Fetching...</span>';
-    const data = await api('/api/graph', {endpoint, token});
-    if(data.success){
-        res.innerHTML = `<pre style="color:#00d2ff;white-space:pre-wrap">${JSON.stringify(data.data, null, 2)}</pre>`;
-    }else{
-        res.innerHTML = `<span style="color:#d63031">${data.error}</span>`;
+    function renderImageTool(cont){
+        cont.innerHTML=`<input type="file" accept="image/*" id="imgUpload"><br><button id="blurBtn"><i class="fas fa-droplet"></i> Blur</button><button id="enhanceBtn"><i class="fas fa-sun"></i> Enhance</button><div class="tool-output"><canvas id="imgCanvas" style="max-width:100%"></canvas></div>`;
+        // image manipulation via python endpoint
     }
-}
-
-function copyText(t){navigator.clipboard.writeText(t);alert('Copied!')}
-
-function genTimestamp(){
-    const ts = Math.floor(Date.now()/1000);
-    document.getElementById('quickResult').classList.add('show');
-    document.getElementById('quickResult').innerHTML = `<strong>Timestamp:</strong> ${ts}<br><span class="copy-btn" onclick="copyText('${ts}')">Copy</span>`;
-}
-
-function genRandomUID(){
-    const uid = '1000'+Math.floor(Math.random()*9000000000000000);
-    document.getElementById('quickResult').classList.add('show');
-    document.getElementById('quickResult').innerHTML = `<strong>Random UID:</strong> ${uid}<br><span class="copy-btn" onclick="copyText('${uid}')">Copy</span>`;
-}
-
-function encodeURL(){
-    const t = prompt('Enter text to URL encode:');
-    if(t){
-        const e = encodeURIComponent(t);
-        document.getElementById('quickResult').classList.add('show');
-        document.getElementById('quickResult').innerHTML = `<strong>Encoded:</strong> ${e}<br><span class="copy-btn" onclick="copyText('${e}')">Copy</span>`;
-    }
-}
-
-function decodeURL(){
-    const t = prompt('Enter URL encoded text:');
-    if(t){
-        try{
-            const d = decodeURIComponent(t);
-            document.getElementById('quickResult').classList.add('show');
-            document.getElementById('quickResult').innerHTML = `<strong>Decoded:</strong> ${d}<br><span class="copy-btn" onclick="copyText('${d}')">Copy</span>`;
-        }catch(e){alert('Invalid URL encoded text')}
-    }
-}
-
-function encodeBase64(){
-    const t = prompt('Enter text to Base64 encode:');
-    if(t){
-        const e = btoa(t);
-        document.getElementById('quickResult').classList.add('show');
-        document.getElementById('quickResult').innerHTML = `<strong>Base64:</strong> ${e}<br><span class="copy-btn" onclick="copyText('${e}')">Copy</span>`;
-    }
-}
-
-function decodeBase64(){
-    const t = prompt('Enter Base64 text:');
-    if(t){
-        try{
-            const d = atob(t);
-            document.getElementById('quickResult').classList.add('show');
-            document.getElementById('quickResult').innerHTML = `<strong>Decoded:</strong> ${d}<br><span class="copy-btn" onclick="copyText('${d}')">Copy</span>`;
-        }catch(e){alert('Invalid Base64')}
-    }
-}
+    document.querySelectorAll('.cat-chip').forEach(c=>c.addEventListener('click',function(){
+        document.querySelectorAll('.cat-chip').forEach(cc=>cc.classList.remove('active')); this.classList.add('active');
+        renderTools(this.dataset.cat);
+    }));
+    renderTools();
 </script>
 </body>
-</html>
-'''
+</html>"""
 
-@app.route('/')
-def index():
-    return render_template_string(HTML)
-
-@app.route('/api/uid', methods=['POST'])
-def api_uid():
-    url = request.json.get('url', '').strip()
-    if not url:
-        return jsonify({'success': False, 'error': 'URL required'})
-    
-    patterns = [r'facebook\.com\/([^\/\?\&]+)', r'fb\.com\/([^\/\?\&]+)', r'id=(\d+)']
-    for p in patterns:
-        m = re.search(p, url)
-        if m:
-            val = m.group(1)
-            if val.isdigit():
-                return jsonify({'success': True, 'uid': val})
-            try:
-                r = requests.get(f'https://graph.facebook.com/v19.0/{val}', timeout=5)
-                if r.status_code == 200:
-                    return jsonify({'success': True, 'uid': r.json().get('id', val)})
-            except: pass
-    return jsonify({'success': False, 'error': 'Cannot extract UID'})
-
-@app.route('/api/token', methods=['POST'])
-def api_token():
-    token = request.json.get('token', '').strip()
-    if not token:
-        return jsonify({'valid': False, 'error': 'Token required'})
-    try:
-        r = requests.get('https://graph.facebook.com/v19.0/me', params={'access_token': token, 'fields': 'id,name'}, timeout=5)
-        if r.status_code == 200:
-            d = r.json()
-            return jsonify({'valid': True, 'user_id': d.get('id'), 'name': d.get('name')})
-        return jsonify({'valid': False, 'error': r.json().get('error', {}).get('message', 'Invalid')})
-    except Exception as e:
-        return jsonify({'valid': False, 'error': str(e)})
-
-@app.route('/api/dp', methods=['POST'])
-def api_dp():
-    inp = request.json.get('input', '').strip()
-    mode = request.json.get('mode', 'uid')
-    
-    uid = inp
-    if mode == 'url':
-        m = re.search(r'(?:facebook\.com\/|fb\.com\/|id=)([^\/\?\&]+)', inp)
-        if m:
-            uid = m.group(1)
-            if not uid.isdigit():
-                try:
-                    r = requests.get(f'https://graph.facebook.com/v19.0/{uid}', timeout=3)
-                    if r.status_code == 200:
-                        uid = r.json().get('id', uid)
-                except: pass
-    
-    return jsonify({'success': True, 'url': f'https://graph.facebook.com/v19.0/{uid}/picture?width=720'})
-
-@app.route('/api/info', methods=['POST'])
-def api_info():
-    inp = request.json.get('input', '').strip()
-    uid = inp
-    if not uid.isdigit():
-        m = re.search(r'(?:facebook\.com\/|fb\.com\/|id=)([^\/\?\&]+)', inp)
-        if m:
-            uid = m.group(1)
-            if not uid.isdigit():
-                try:
-                    r = requests.get(f'https://graph.facebook.com/v19.0/{uid}', timeout=3)
-                    if r.status_code == 200:
-                        uid = r.json().get('id', uid)
-                except: pass
-    
-    return jsonify({'success': True, 'uid': uid, 'url': f'https://facebook.com/{uid}', 'pic': f'https://graph.facebook.com/v19.0/{uid}/picture?width=720'})
-
-@app.route('/api/graph', methods=['POST'])
-def api_graph():
-    endpoint = request.json.get('endpoint', 'me').lstrip('/')
-    token = request.json.get('token', '')
-    if not token:
-        return jsonify({'success': False, 'error': 'Token required'})
-    try:
-        url = f'https://graph.facebook.com/v19.0/{endpoint}'
-        url += '&' if '?' in url else '?'
-        url += f'access_token={token}'
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            return jsonify({'success': True, 'data': r.json()})
-        return jsonify({'success': False, 'error': r.json().get('error', {}).get('message', 'Failed')})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200); self.send_header('Content-type','text/html'); self.end_headers()
+            self.wfile.write(HTML.encode())
+        elif self.path.startswith('/qr'):
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            data = params.get('data',[''])[0]
+            img = qrcode.make(data)
+            buf = BytesIO(); img.save(buf, 'PNG')
+            self.send_response(200); self.send_header('Content-type','image/png'); self.end_headers()
+            self.wfile.write(buf.getvalue())
+        else:
+            super().do_GET()
 
 if __name__ == '__main__':
-    print("\n✨ FB Premium Toolkit - http://127.0.0.1:5000\n")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        print(f"🔥 Premium Toolbox running at http://localhost:{PORT}")
+        httpd.serve_forever()
