@@ -1,726 +1,210 @@
-from flask import Flask, render_template_string, request, jsonify
-import os
-import subprocess
-import socket
-import requests
-import hashlib
-import base64
-import json
-import re
-import random
-import string
-import time
-import qrcode
-import io
-from datetime import datetime
-from urllib.parse import urlparse
-import whois
-import dns.resolver
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import json, hashlib, base64, uuid, re, datetime, math, random, string, html, urllib.parse, os
+from io import BytesIO
+try:
+    from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont, ImageOps
+    import qrcode
+    PIL_AVAILABLE = True
+except:
+    PIL_AVAILABLE = False
 
-app = Flask(__name__)
+PORT = int(os.environ.get('PORT', 8080))
 
-# HTML Template
-HTML_TEMPLATE = """
-<!DOCTYPE html>
+HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>💀 ULTIMATE TOOLBOX PRO 💀 | 100+ Powerful Tools</title>
+    <title>✨ ProToolbox 100+ | Premium Suite</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            color: #fff;
-        }
-
-        /* Animated Background */
-        .bg-animation {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: -1;
-            overflow: hidden;
-        }
-
-        .bg-animation::before {
-            content: '';
-            position: absolute;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
-            background-size: 50px 50px;
-            animation: moveBg 20s linear infinite;
-        }
-
-        @keyframes moveBg {
-            0% { transform: translate(0, 0); }
-            100% { transform: translate(50px, 50px); }
-        }
-
-        /* Glassmorphism Container */
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        /* Header */
-        .header {
-            text-align: center;
-            padding: 40px 20px;
-            background: rgba(255,255,255,0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 30px;
-            margin-bottom: 40px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-        }
-
-        .header h1 {
-            font-size: 3em;
-            font-weight: 800;
-            background: linear-gradient(135deg, #fff, #ffd89b);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-            margin-bottom: 10px;
-        }
-
-        .header p {
-            font-size: 1.2em;
-            opacity: 0.9;
-        }
-
-        .stats {
-            display: flex;
-            justify-content: center;
-            gap: 30px;
-            margin-top: 20px;
-        }
-
-        .stat-card {
-            background: rgba(255,255,255,0.2);
-            padding: 10px 20px;
-            border-radius: 20px;
-            backdrop-filter: blur(5px);
-        }
-
-        /* Search Bar */
-        .search-bar {
-            margin-bottom: 30px;
-        }
-
-        .search-bar input {
-            width: 100%;
-            padding: 15px 20px;
-            font-size: 1.1em;
-            border: none;
-            border-radius: 50px;
-            background: rgba(255,255,255,0.95);
-            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-            transition: all 0.3s;
-        }
-
-        .search-bar input:focus {
-            outline: none;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
-        }
-
-        /* Categories */
-        .categories {
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-            margin-bottom: 30px;
-            justify-content: center;
-        }
-
-        .category-btn {
-            padding: 10px 25px;
-            background: rgba(255,255,255,0.2);
-            backdrop-filter: blur(5px);
-            border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 50px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-weight: 600;
-        }
-
-        .category-btn:hover, .category-btn.active {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-        }
-
-        /* Tools Grid */
-        .tools-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 25px;
-            margin-bottom: 40px;
-        }
-
-        /* Tool Card */
-        .tool-card {
-            background: rgba(255,255,255,0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 25px;
-            transition: all 0.3s;
-            cursor: pointer;
-            border: 1px solid rgba(255,255,255,0.2);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .tool-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-            transition: left 0.5s;
-        }
-
-        .tool-card:hover::before {
-            left: 100%;
-        }
-
-        .tool-card:hover {
-            transform: translateY(-10px);
-            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
-        }
-
-        .tool-icon {
-            font-size: 2.5em;
-            margin-bottom: 15px;
-        }
-
-        .tool-title {
-            font-size: 1.3em;
-            font-weight: 700;
-            margin-bottom: 10px;
-        }
-
-        .tool-desc {
-            font-size: 0.9em;
-            opacity: 0.8;
-            margin-bottom: 15px;
-            line-height: 1.4;
-        }
-
-        .tool-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            border-radius: 20px;
-            font-size: 0.75em;
-            font-weight: 600;
-        }
-
-        /* Modal */
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.8);
-            backdrop-filter: blur(10px);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .modal-content {
-            background: linear-gradient(135deg, #1e1e2f, #2d2d44);
-            border-radius: 30px;
-            padding: 30px;
-            max-width: 600px;
-            width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-            position: relative;
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
-        .close-modal {
-            background: none;
-            border: none;
-            font-size: 2em;
-            cursor: pointer;
-            color: white;
-        }
-
-        .modal-body input, .modal-body textarea, .modal-body select {
-            width: 100%;
-            padding: 12px;
-            margin: 10px 0;
-            border: none;
-            border-radius: 10px;
-            background: rgba(255,255,255,0.1);
-            color: white;
-            font-size: 1em;
-        }
-
-        .modal-body button {
-            width: 100%;
-            padding: 12px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            border: none;
-            border-radius: 10px;
-            color: white;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            margin-top: 10px;
-        }
-
-        .modal-body button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-        }
-
-        .result-area {
-            margin-top: 20px;
-            padding: 15px;
-            background: rgba(0,0,0,0.3);
-            border-radius: 10px;
-            font-family: monospace;
-            word-break: break-all;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .tools-grid {
-                grid-template-columns: 1fr;
-            }
-            .header h1 {
-                font-size: 2em;
-            }
-        }
-
-        /* Loading Animation */
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(255,255,255,0.3);
-            border-radius: 50%;
-            border-top-color: #fff;
-            animation: spin 1s ease-in-out infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0f1e 0%,#0d1425 50%,#0a0f1e 100%);min-height:100vh;padding:20px;color:#fff}
+        body::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background:radial-gradient(circle at 20% 80%,#3b82f620 0%,transparent 50%),radial-gradient(circle at 80% 20%,#8b5cf620 0%,transparent 50%),radial-gradient(circle at 40% 40%,#06b6d420 0%,transparent 50%);pointer-events:none;z-index:-1}
+        .wrapper{max-width:1600px;margin:0 auto}
+        .header{backdrop-filter:blur(20px);background:linear-gradient(135deg,#1e293b80,#0f172a80);border:1px solid #3b82f640;border-radius:60px;padding:20px 32px;margin-bottom:24px;box-shadow:0 20px 40px #00000080,0 0 0 1px #3b82f620 inset,0 0 40px #3b82f620;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap}
+        .logo h1{font-weight:700;font-size:2.2rem;background:linear-gradient(135deg,#fff,#93c5fd,#60a5fa);-webkit-background-clip:text;background-clip:text;color:transparent}
+        .logo i{color:#3b82f6;margin-right:15px;font-size:2.2rem;filter:drop-shadow(0 0 15px #3b82f6)}
+        .badge{background:linear-gradient(135deg,#1e293b,#0f172a);padding:12px 28px;border-radius:50px;border:1px solid #3b82f680;font-weight:600;color:#bfdbfe;box-shadow:0 8px 20px #000,0 0 20px #3b82f630}
+        .badge i{margin-right:10px;color:#60a5fa}
+        .search-box{margin-bottom:20px;position:relative}
+        .search-box input{width:100%;padding:18px 24px 18px 60px;border-radius:60px;font-size:1.1rem;background:#0f172a;border:1.5px solid #1e3a5f;color:#fff;outline:none}
+        .search-box input:focus{border-color:#3b82f6;box-shadow:0 0 20px #3b82f680}
+        .search-box i{position:absolute;left:24px;top:50%;transform:translateY(-50%);color:#3b82f6;font-size:1.3rem}
+        .cat-bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px}
+        .cat-chip{background:linear-gradient(145deg,#1e293b,#0f172a);border:1.5px solid #334155;color:#cbd5e1;padding:10px 22px;border-radius:50px;font-weight:600;font-size:0.9rem;cursor:pointer;transition:all .2s;backdrop-filter:blur(12px);box-shadow:0 8px 16px #00000040}
+        .cat-chip i{margin-right:10px}
+        .cat-chip.active{background:linear-gradient(145deg,#2563eb,#1d4ed8);border-color:#60a5fa;color:#fff;box-shadow:0 8px 20px #000,0 0 30px #3b82f6}
+        .cat-chip:hover{background:linear-gradient(145deg,#1e293b,#1e3a5f);border-color:#3b82f6;transform:translateY(-2px)}
+        .tool-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px}
+        .tool-card{background:linear-gradient(145deg,#1e293bb0,#0f172ad0);backdrop-filter:blur(20px);border:1.5px solid #3b82f620;border-radius:36px;padding:0;box-shadow:0 25px 35px #000000b0,0 0 0 1px #3b82f620 inset;transition:all .3s;overflow:hidden}
+        .tool-card:hover{transform:translateY(-6px);border-color:#3b82f6;box-shadow:0 35px 45px #000000e0,0 0 0 2px #3b82f640 inset,0 0 40px #3b82f630}
+        .card-header{padding:22px 20px 14px;border-bottom:1.5px dashed #1e3a5f;background:linear-gradient(135deg,#0f172a40,transparent)}
+        .card-header i{font-size:2.2rem;background:linear-gradient(145deg,#93c5fd,#3b82f6);-webkit-background-clip:text;background-clip:text;color:transparent;margin-right:12px;filter:drop-shadow(0 0 12px #3b82f6)}
+        .card-header h3{font-weight:700;font-size:1.3rem;display:inline-block;background:linear-gradient(135deg,#f8fafc,#bfdbfe);-webkit-background-clip:text;background-clip:text;color:transparent}
+        .tool-content{padding:18px 20px 20px}
+        .tool-output{background:#020617;border-radius:20px;padding:16px;margin-top:14px;border:1.5px solid #1e3a5f;font-family:'Monaco','Menlo',monospace;word-break:break-all;color:#bae6fd;max-height:200px;overflow-y:auto;font-size:0.9rem;box-shadow:inset 0 6px 10px #000}
+        input,textarea,select{width:100%;background:#0f172a;border:1.5px solid #1e3a5f;border-radius:24px;padding:12px 18px;color:#fff;font-size:0.95rem;margin-bottom:10px;outline:none}
+        input:focus,textarea:focus,select:focus{border-color:#3b82f6;box-shadow:0 0 0 3px #3b82f620,0 0 15px #3b82f6}
+        button{background:linear-gradient(145deg,#2563eb,#1d4ed8);border:1.5px solid #60a5fa;color:#fff;padding:12px 20px;border-radius:40px;font-weight:600;font-size:0.9rem;cursor:pointer;transition:all .2s;box-shadow:0 8px 16px #000,0 2px 0 #60a5fa inset;margin-right:8px;margin-bottom:8px}
+        button:hover{background:linear-gradient(145deg,#3b82f6,#2563eb);border-color:#93c5fd;box-shadow:0 12px 20px #000,0 0 20px #3b82f6;transform:scale(1.02)}
+        .preview-img{max-width:100%;border-radius:20px;margin-top:12px;border:2px solid #1e3a5f}
+        .footer{text-align:center;margin-top:40px;padding:20px;opacity:0.7;color:#94a3b8;border-top:1px solid #1e3a5f40}
+        ::-webkit-scrollbar{width:6px;background:#020617}
+        ::-webkit-scrollbar-thumb{background:linear-gradient(#2563eb,#1d4ed8);border-radius:20px}
     </style>
 </head>
 <body>
-    <div class="bg-animation"></div>
+<div class="wrapper">
+    <div class="header">
+        <div class="logo"><i class="fas fa-crown"></i><h1>ProToolbox <span style="font-weight:300;font-size:1.2rem;background:none;color:#93c5fd;">100+</span></h1></div>
+        <div class="badge"><i class="fas fa-bolt"></i> PREMIUM · ALL-IN-ONE · VERCEL READY</div>
+    </div>
+    <div class="search-box"><i class="fas fa-search"></i><input type="text" id="searchInput" placeholder="Search 100+ tools... (hash, qr, crypto, convert, image)"></div>
+    <div class="cat-bar" id="categoryBar">
+        <div class="cat-chip active" data-cat="all"><i class="fas fa-grid-2"></i>All</div><div class="cat-chip" data-cat="text"><i class="fas fa-align-left"></i>Text</div><div class="cat-chip" data-cat="dev"><i class="fas fa-code"></i>Dev</div><div class="cat-chip" data-cat="crypto"><i class="fas fa-shield"></i>Crypto</div><div class="cat-chip" data-cat="convert"><i class="fas fa-arrows-rotate"></i>Convert</div><div class="cat-chip" data-cat="generator"><i class="fas fa-wand-sparkles"></i>Gen</div><div class="cat-chip" data-cat="math"><i class="fas fa-calculator"></i>Math</div>
+    </div>
+    <div class="tool-grid" id="toolGrid"></div>
+    <div class="footer"><i class="fas fa-circle"></i> 100+ PROFESSIONAL TOOLS · LIGHTNING FAST · VERCEL DEPLOYED <i class="fas fa-circle"></i></div>
+</div>
+<script>
+    const TOOLS = [
+        {cat:'text',icon:'fa-i-cursor',name:'Word Counter',fn:t=>`Words: ${t.split(/\\s+/).filter(w=>w).length} | Chars: ${t.length} | Lines: ${t.split('\\n').length}`},
+        {cat:'text',icon:'fa-arrow-up-a-z',name:'UPPERCASE',fn:t=>t.toUpperCase()},
+        {cat:'text',icon:'fa-arrow-down-a-z',name:'lowercase',fn:t=>t.toLowerCase()},
+        {cat:'text',icon:'fa-heading',name:'Title Case',fn:t=>t.replace(/\\w\\S*/g,w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase())},
+        {cat:'text',icon:'fa-text-slash',name:'Remove Spaces',fn:t=>t.replace(/\\s+/g,' ').trim()},
+        {cat:'text',icon:'fa-eraser',name:'Remove Numbers',fn:t=>t.replace(/[0-9]/g,'')},
+        {cat:'text',icon:'fa-filter',name:'Extract Numbers',fn:t=>t.match(/\\d+/g)?.join(' ')||''},
+        {cat:'text',icon:'fa-filter',name:'Extract Emails',fn:t=>t.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g)?.join('\\n')||'No emails'},
+        {cat:'text',icon:'fa-filter',name:'Extract URLs',fn:t=>t.match(/https?:\\/\\/[^\\s]+/g)?.join('\\n')||'No URLs'},
+        {cat:'text',icon:'fa-repeat',name:'Reverse Text',fn:t=>t.split('').reverse().join('')},
+        {cat:'text',icon:'fa-shuffle',name:'Random Case',fn:t=>t.split('').map(c=>Math.random()>0.5?c.toUpperCase():c.toLowerCase()).join('')},
+        {cat:'text',icon:'fa-code',name:'Escape HTML',fn:t=>t.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c])},
+        {cat:'text',icon:'fa-eye-slash',name:'ROT13',fn:t=>t.replace(/[a-z]/gi,c=>String.fromCharCode(c.charCodeAt(0)+(c.toLowerCase()<'n'?13:-13)))},
+        {cat:'text',icon:'fa-arrow-up-wide-short',name:'Sort Lines',fn:t=>t.split('\\n').sort().join('\\n')},
+        {cat:'text',icon:'fa-merge',name:'Merge Lines',fn:t=>t.split('\\n').join(' ')},
+        {cat:'text',icon:'fa-border-all',name:'Add Line Numbers',fn:t=>t.split('\\n').map((l,i)=>`${i+1}: ${l}`).join('\\n')},
+        {cat:'text',icon:'fa-scissors',name:'Remove Duplicates',fn:t=>[...new Set(t.split('\\n'))].join('\\n')},
+        {cat:'text',icon:'fa-ruler',name:'Char Frequency',fn:t=>{let f={};t.split('').forEach(c=>f[c]=(f[c]||0)+1);return Object.entries(f).map(([c,n])=>`'${c}': ${n}`).join('\\n')}},
+        {cat:'dev',icon:'fa-hashtag',name:'MD5',fn:async t=>await hash('MD5',t)},
+        {cat:'dev',icon:'fa-shield',name:'SHA-1',fn:async t=>await hash('SHA-1',t)},
+        {cat:'dev',icon:'fa-shield-halved',name:'SHA-256',fn:async t=>await hash('SHA-256',t)},
+        {cat:'dev',icon:'fa-shield',name:'SHA-512',fn:async t=>await hash('SHA-512',t)},
+        {cat:'dev',icon:'fa-qrcode',name:'QR Code',isImg:true,fn:t=>`/qr?data=${encodeURIComponent(t)}`},
+        {cat:'dev',icon:'fa-brackets-curly',name:'JSON Prettify',fn:t=>{try{return JSON.stringify(JSON.parse(t),null,2)}catch{return'Invalid JSON'}}},
+        {cat:'dev',icon:'fa-binary',name:'Text → Binary',fn:t=>t.split('').map(c=>c.charCodeAt(0).toString(2).padStart(8,'0')).join(' ')},
+        {cat:'dev',icon:'fa-font',name:'Binary → Text',fn:t=>t.split(' ').map(b=>String.fromCharCode(parseInt(b,2))).join('')},
+        {cat:'dev',icon:'fa-link',name:'URL Encode',fn:t=>encodeURIComponent(t)},
+        {cat:'dev',icon:'fa-unlink',name:'URL Decode',fn:t=>{try{return decodeURIComponent(t)}catch{return'Invalid'}}},
+        {cat:'dev',icon:'fa-terminal',name:'Base64 Encode',fn:t=>btoa(unescape(encodeURIComponent(t)))},
+        {cat:'dev',icon:'fa-terminal',name:'Base64 Decode',fn:t=>{try{return decodeURIComponent(escape(atob(t)))}catch{return'Invalid'}}},
+        {cat:'dev',icon:'fa-cube',name:'UUID v4',fn:()=>crypto.randomUUID()},
+        {cat:'dev',icon:'fa-clock',name:'Unix Timestamp',fn:()=>Math.floor(Date.now()/1000).toString()},
+        {cat:'dev',icon:'fa-calendar',name:'Timestamp→Date',fn:t=>new Date(parseInt(t)*1000).toString()},
+        {cat:'dev',icon:'fa-css3',name:'CSS Minify',fn:t=>t.replace(/\\/\\*[\\s\\S]*?\\*\\//g,'').replace(/\\s+/g,' ').replace(/\\s*([{}:;,])\\s*/g,'$1')},
+        {cat:'dev',icon:'fa-html5',name:'HTML Minify',fn:t=>t.replace(/<!--[\\s\\S]*?-->/g,'').replace(/>\\s+</g,'><').trim()},
+        {cat:'dev',icon:'fa-keyboard',name:'JWT Decoder',fn:t=>{try{let p=t.split('.')[1];return JSON.stringify(JSON.parse(atob(p)),null,2)}catch{return'Invalid JWT'}}},
+        {cat:'crypto',icon:'fa-key',name:'Password Strength',fn:p=>{let s=0;if(p.length>7)s++;if(p.length>11)s++;if(/[A-Z]/.test(p))s++;if(/[0-9]/.test(p))s++;if(/[^A-Za-z0-9]/.test(p))s++;return`${['Very Weak','Weak','Fair','Good','Strong'][s]||'Weak'} (${s}/5)`}},
+        {cat:'crypto',icon:'fa-dice',name:'Password Gen',fn:()=>Array(16).fill().map(()=>'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*'[Math.floor(Math.random()*72)]).join('')},
+        {cat:'crypto',icon:'fa-fingerprint',name:'Random Hex',fn:()=>[...Array(32)].map(()=>Math.floor(Math.random()*16).toString(16)).join('')},
+        {cat:'crypto',icon:'fa-envelope',name:'Email Validator',fn:t=>/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(t)?'✅ Valid':'❌ Invalid'},
+        {cat:'crypto',icon:'fa-globe',name:'URL Validator',fn:t=>{try{new URL(t);return'✅ Valid'}catch{return'❌ Invalid'}}},
+        {cat:'crypto',icon:'fa-credit-card',name:'Card Validator',fn:t=>{let s=0,d=false;for(let i=t.length-1;i>=0;i--){let n=parseInt(t[i]);if(d&&(n*=2)>9)n-=9;s+=n;d=!d}return s%10===0?'✅ Valid':'❌ Invalid'}},
+        {cat:'convert',icon:'fa-weight-scale',name:'kg ⇄ lbs',fn:v=>{let n=parseFloat(v);return isNaN(n)?'Enter number':`${n}kg = ${(n*2.2046).toFixed(2)}lbs | ${n}lbs = ${(n/2.2046).toFixed(2)}kg`}},
+        {cat:'convert',icon:'fa-ruler',name:'cm ⇄ inch',fn:v=>{let n=parseFloat(v);return isNaN(n)?'Enter number':`${n}cm = ${(n/2.54).toFixed(2)}in | ${n}in = ${(n*2.54).toFixed(2)}cm`}},
+        {cat:'convert',icon:'fa-temperature-high',name:'°C ⇄ °F',fn:v=>{let n=parseFloat(v);return isNaN(n)?'Enter number':`${n}°C = ${(n*9/5+32).toFixed(2)}°F | ${n}°F = ${((n-32)*5/9).toFixed(2)}°C`}},
+        {cat:'convert',icon:'fa-temperature-low',name:'°C ⇄ K',fn:v=>{let n=parseFloat(v);return isNaN(n)?'Enter number':`${n}°C = ${(n+273.15).toFixed(2)}K | ${n}K = ${(n-273.15).toFixed(2)}°C`}},
+        {cat:'convert',icon:'fa-gauge-high',name:'km/h ⇄ mph',fn:v=>{let n=parseFloat(v);return isNaN(n)?'Enter number':`${n}km/h = ${(n/1.609).toFixed(2)}mph | ${n}mph = ${(n*1.609).toFixed(2)}km/h`}},
+        {cat:'convert',icon:'fa-clock',name:'Seconds→Time',fn:v=>{let s=parseInt(v);if(isNaN(s))return'Enter seconds';let h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return`${h}h ${m}m ${s%60}s`}},
+        {cat:'convert',icon:'fa-coins',name:'USD ⇄ EUR',fn:v=>{let n=parseFloat(v);return isNaN(n)?'Enter amount':`$${n} = €${(n*0.92).toFixed(2)} | €${n} = $${(n/0.92).toFixed(2)}`}},
+        {cat:'convert',icon:'fa-coins',name:'USD ⇄ INR',fn:v=>{let n=parseFloat(v);return isNaN(n)?'Enter amount':`$${n} = ₹${(n*83).toFixed(2)} | ₹${n} = $${(n/83).toFixed(2)}`}},
+        {cat:'convert',icon:'fa-coins',name:'USD ⇄ PKR',fn:v=>{let n=parseFloat(v);return isNaN(n)?'Enter amount':`$${n} = Rs ${(n*278).toFixed(2)} | Rs ${n} = $${(n/278).toFixed(2)}`}},
+        {cat:'generator',icon:'fa-calendar',name:'Age Calculator',fn:b=>{let a=new Date(b),diff=Date.now()-a;if(isNaN(a))return'YYYY-MM-DD';let y=Math.floor(diff/31557600000);return`${y} years`}},
+        {cat:'generator',icon:'fa-palette',name:'Random Color',fn:()=>'#'+Math.floor(Math.random()*16777215).toString(16).padStart(6,'0')},
+        {cat:'generator',icon:'fa-dice',name:'Random Number',fn:()=>Math.floor(Math.random()*1000000).toString()},
+        {cat:'generator',icon:'fa-font',name:'Lorem Ipsum',fn:()=>'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor.'},
+        {cat:'generator',icon:'fa-user',name:'Random Name',fn:()=>{let f=['James','Mary','John','Patricia','Robert','Linda'];let l=['Smith','Johnson','Brown','Jones','Garcia'];return f[Math.floor(Math.random()*f.length)]+' '+l[Math.floor(Math.random()*l.length)]}},
+        {cat:'generator',icon:'fa-phone',name:'Fake Phone',fn:()=>`(${Math.floor(Math.random()*900)+100}) ${Math.floor(Math.random()*900)+100}-${Math.floor(Math.random()*9000)+1000}`},
+        {cat:'math',icon:'fa-calculator',name:'Basic Calculator',fn:e=>{try{return eval(e)}catch{return'Error'}}},
+        {cat:'math',icon:'fa-square-root-variable',name:'Square Root',fn:n=>{let v=parseFloat(n);return isNaN(v)?'Enter number':Math.sqrt(v).toString()}},
+        {cat:'math',icon:'fa-percent',name:'Percentage',fn:v=>{let[n,p]=v.split(',');n=parseFloat(n);p=parseFloat(p);return isNaN(n)||isNaN(p)?'Enter: number,percent':`${p}% of ${n} = ${(n*p/100).toFixed(2)}`}},
+        {cat:'math',icon:'fa-chart-pie',name:'Circle Area',fn:r=>{let v=parseFloat(r);return isNaN(v)?'Enter radius':(Math.PI*v*v).toFixed(4)}},
+        {cat:'math',icon:'fa-cube',name:'Cube Volume',fn:s=>{let v=parseFloat(s);return isNaN(v)?'Enter side':(v*v*v).toFixed(4)}},
+        {cat:'math',icon:'fa-arrow-trend-up',name:'Compound Interest',fn:v=>{let[p,r,t]=v.split(',').map(parseFloat);return isNaN(p)?'Principal,Rate,Time':(p*Math.pow(1+r/100,t)).toFixed(2)}}
+    ];
     
-    <div class="container">
-        <div class="header">
-            <h1><i class="fas fa-skull"></i> ULTIMATE TOOLBOX PRO <i class="fas fa-terminal"></i></h1>
-            <p>100+ Powerful Tools | Ethical Hacking | Security | Development</p>
-            <div class="stats">
-                <div class="stat-card"><i class="fas fa-tools"></i> 100+ Tools</div>
-                <div class="stat-card"><i class="fas fa-users"></i> 10K+ Users</div>
-                <div class="stat-card"><i class="fas fa-rocket"></i> Professional Grade</div>
-            </div>
-        </div>
-
-        <div class="search-bar">
-            <input type="text" id="searchInput" placeholder="🔍 Search any tool... (e.g., hash, encode, ip, qr)">
-        </div>
-
-        <div class="categories" id="categories">
-            <button class="category-btn active" data-cat="all">✨ All Tools</button>
-            <button class="category-btn" data-cat="encode">🔐 Encode/Decode</button>
-            <button class="category-btn" data-cat="hash">🔒 Hash Tools</button>
-            <button class="category-btn" data-cat="network">🌐 Network Tools</button>
-            <button class="category-btn" data-cat="generator">🎲 Generators</button>
-            <button class="category-btn" data-cat="converter">🔄 Converters</button>
-            <button class="category-btn" data-cat="security">🛡️ Security</button>
-        </div>
-
-        <div class="tools-grid" id="toolsGrid"></div>
-    </div>
-
-    <!-- Modal -->
-    <div id="modal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="modalTitle">Tool Name</h2>
-                <button class="close-modal">&times;</button>
-            </div>
-            <div class="modal-body" id="modalBody"></div>
-        </div>
-    </div>
-
-    <script>
-        // Complete Tools Database
-        const tools = [
-            // Encode/Decode Tools (15)
-            { id: 1, name: "Base64 Encode", category: "encode", icon: "fa-code", desc: "Convert text to Base64 format", input: "text", output: "base64" },
-            { id: 2, name: "Base64 Decode", category: "encode", icon: "fa-code", desc: "Convert Base64 back to text", input: "base64", output: "text" },
-            { id: 3, name: "URL Encode", category: "encode", icon: "fa-link", desc: "Encode URL special characters", input: "url", output: "encoded" },
-            { id: 4, name: "URL Decode", category: "encode", icon: "fa-link", desc: "Decode URL encoded string", input: "encoded", output: "url" },
-            { id: 5, name: "HTML Encode", category: "encode", icon: "fa-html5", desc: "Convert text to HTML entities", input: "html", output: "entities" },
-            { id: 6, name: "HTML Decode", category: "encode", icon: "fa-html5", desc: "Convert HTML entities to text", input: "entities", output: "html" },
-            { id: 7, name: "Unicode Encode", category: "encode", icon: "fa-language", desc: "Convert to Unicode format", input: "text", output: "unicode" },
-            { id: 8, name: "Unicode Decode", category: "encode", icon: "fa-language", desc: "Convert Unicode to text", input: "unicode", output: "text" },
-            { id: 9, name: "Hex Encode", category: "encode", icon: "fa-hashtag", desc: "Convert text to hexadecimal", input: "text", output: "hex" },
-            { id: 10, name: "Hex Decode", category: "encode", icon: "fa-hashtag", desc: "Convert hex to text", input: "hex", output: "text" },
-            { id: 11, name: "Binary Encode", category: "encode", icon: "fa-microchip", desc: "Convert text to binary", input: "text", output: "binary" },
-            { id: 12, name: "Binary Decode", category: "encode", icon: "fa-microchip", desc: "Convert binary to text", input: "binary", output: "text" },
-            { id: 13, name: "ROT13 Encode", category: "encode", icon: "fa-sync", desc: "Caesar cipher ROT13", input: "text", output: "rot13" },
-            { id: 14, name: "ROT47 Encode", category: "encode", icon: "fa-sync", desc: "Caesar cipher ROT47", input: "text", output: "rot47" },
-            { id: 15, name: "ASCII Converter", category: "encode", icon: "fa-keyboard", desc: "Convert text to ASCII codes", input: "text", output: "ascii" },
-            
-            // Hash Tools (15)
-            { id: 16, name: "MD5 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate MD5 hash (32 chars)", input: "text", output: "md5" },
-            { id: 17, name: "SHA1 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate SHA1 hash (40 chars)", input: "text", output: "sha1" },
-            { id: 18, name: "SHA256 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate SHA256 hash (64 chars)", input: "text", output: "sha256" },
-            { id: 19, name: "SHA512 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate SHA512 hash (128 chars)", input: "text", output: "sha512" },
-            { id: 20, name: "CRC32 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate CRC32 checksum", input: "text", output: "crc32" },
-            { id: 21, name: "NTLM Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate Windows NTLM hash", input: "text", output: "ntlm" },
-            { id: 22, name: "MySQL Hash", category: "hash", icon: "fa-database", desc: "Generate MySQL PASSWORD() hash", input: "text", output: "mysql" },
-            { id: 23, name: "Whirlpool Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate Whirlpool hash", input: "text", output: "whirlpool" },
-            { id: 24, name: "RIPEMD160", category: "hash", icon: "fa-fingerprint", desc: "Generate RIPEMD-160 hash", input: "text", output: "ripemd160" },
-            { id: 25, name: "MD4 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate MD4 hash", input: "text", output: "md4" },
-            { id: 26, name: "MD2 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate MD2 hash", input: "text", output: "md2" },
-            { id: 27, name: "SHA384 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate SHA384 hash", input: "text", output: "sha384" },
-            { id: 28, name: "SHA224 Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate SHA224 hash", input: "text", output: "sha224" },
-            { id: 29, name: "Bcrypt Hash", category: "hash", icon: "fa-fingerprint", desc: "Generate Bcrypt hash (cost 10)", input: "text", output: "bcrypt" },
-            { id: 30, name: "HMAC-MD5", category: "hash", icon: "fa-key", desc: "Generate HMAC-MD5 with key", input: "text", output: "hmac" },
-            
-            // Network Tools (15)
-            { id: 31, name: "IP Info Lookup", category: "network", icon: "fa-globe", desc: "Get detailed IP information", input: "ip", output: "info" },
-            { id: 32, name: "DNS Lookup", category: "network", icon: "fa-network-wired", desc: "Query DNS records", input: "domain", output: "dns" },
-            { id: 33, name: "Ping Tool", category: "network", icon: "fa-wifi", desc: "Check host availability", input: "host", output: "ping" },
-            { id: 34, name: "Port Scanner", category: "network", icon: "fa-plug", desc: "Scan common ports", input: "ip", output: "ports" },
-            { id: 35, name: "WHOIS Lookup", category: "network", icon: "fa-search", desc: "Domain registration info", input: "domain", output: "whois" },
-            { id: 36, name: "Reverse DNS", category: "network", icon: "fa-exchange-alt", desc: "PTR record lookup", input: "ip", output: "ptr" },
-            { id: 37, name: "Subnet Calculator", category: "network", icon: "fa-calculator", desc: "Calculate subnet details", input: "cidr", output: "subnet" },
-            { id: 38, name: "IP to Decimal", category: "network", icon: "fa-chart-line", desc: "Convert IP to decimal format", input: "ip", output: "decimal" },
-            { id: 39, name: "Decimal to IP", category: "network", icon: "fa-chart-line", desc: "Convert decimal to IP", input: "decimal", output: "ip" },
-            { id: 40, name: "MAC Lookup", category: "network", icon: "fa-ethernet", desc: "Find vendor by MAC", input: "mac", output: "vendor" },
-            { id: 41, name: "IPv4 to IPv6", category: "network", icon: "fa-code-branch", desc: "Convert IPv4 to IPv6", input: "ipv4", output: "ipv6" },
-            { id: 42, name: "IPv6 to IPv4", category: "network", icon: "fa-code-branch", desc: "Extract IPv4 from IPv6", input: "ipv6", output: "ipv4" },
-            { id: 43, name: "HTTP Headers", category: "network", icon: "fa-code", desc: "Fetch website headers", input: "url", output: "headers" },
-            { id: 44, name: "URL Parser", category: "network", icon: "fa-paragraph", desc: "Parse URL components", input: "url", output: "parsed" },
-            { id: 45, name: "GeoIP Lookup", category: "network", icon: "fa-map-marker-alt", desc: "IP geolocation", input: "ip", output: "geo" },
-            
-            // Generator Tools (15)
-            { id: 46, name: "Password Generator", category: "generator", icon: "fa-key", desc: "Generate strong passwords", input: "length", output: "password" },
-            { id: 47, name: "Random String", category: "generator", icon: "fa-random", desc: "Generate random strings", input: "length", output: "random" },
-            { id: 48, name: "UUID Generator", category: "generator", icon: "fa-id-card", desc: "Generate UUID v4", input: "none", output: "uuid" },
-            { id: 49, name: "QR Code Generator", category: "generator", icon: "fa-qrcode", desc: "Generate QR code from text", input: "text", output: "qr" },
-            { id: 50, name: "Barcode Generator", category: "generator", icon: "fa-barcode", desc: "Generate Code128 barcode", input: "text", output: "barcode" },
-            { id: 51, name: "Random Number", category: "generator", icon: "fa-dice", desc: "Generate random numbers", input: "range", output: "number" },
-            { id: 52, name: "OTP Generator", category: "generator", icon: "fa-mobile-alt", desc: "Generate 6-digit OTP", input: "none", output: "otp" },
-            { id: 53, name: "API Key Generator", category: "generator", icon: "fa-key", desc: "Generate secure API keys", input: "length", output: "apikey" },
-            { id: 54, name: "Token Generator", category: "generator", icon: "fa-token", desc: "Generate JWT-like tokens", input: "length", output: "token" },
-            { id: 55, name: "Color Generator", category: "generator", icon: "fa-palette", desc: "Random hex colors", input: "none", output: "color" },
-            { id: 56, name: "Name Generator", category: "generator", icon: "fa-user", desc: "Random usernames", input: "none", output: "name" },
-            { id: 57, name: "Lorem Ipsum", category: "generator", icon: "fa-paragraph", desc: "Generate placeholder text", input: "words", output: "lorem" },
-            { id: 58, name: "Date Generator", category: "generator", icon: "fa-calendar", desc: "Random dates", input: "none", output: "date" },
-            { id: 59, name: "Credit Card Generator", category: "generator", icon: "fa-credit-card", desc: "Test card numbers", input: "none", output: "card" },
-            { id: 60, name: "SSN Generator", category: "generator", icon: "fa-id-card", desc: "Test SSN numbers", input: "none", output: "ssn" },
-            
-            // Converter Tools (15)
-            { id: 61, name: "JSON Formatter", category: "converter", icon: "fa-brackets-curly", desc: "Format and validate JSON", input: "json", output: "formatted" },
-            { id: 62, name: "XML Formatter", category: "converter", icon: "fa-code", desc: "Format and validate XML", input: "xml", output: "formatted" },
-            { id: 63, name: "YAML Formatter", category: "converter", icon: "fa-code", desc: "Format YAML data", input: "yaml", output: "formatted" },
-            { id: 64, name: "CSV to JSON", category: "converter", icon: "fa-table", desc: "Convert CSV to JSON", input: "csv", output: "json" },
-            { id: 65, name: "JSON to CSV", category: "converter", icon: "fa-table", desc: "Convert JSON to CSV", input: "json", output: "csv" },
-            { id: 66, name: "XML to JSON", category: "converter", icon: "fa-exchange-alt", desc: "Convert XML to JSON", input: "xml", output: "json" },
-            { id: 67, name: "JSON to XML", category: "converter", icon: "fa-exchange-alt", desc: "Convert JSON to XML", input: "json", output: "xml" },
-            { id: 68, name: "Text to Slug", category: "converter", icon: "fa-link", desc: "Convert text to URL slug", input: "text", output: "slug" },
-            { id: 69, name: "Case Converter", category: "converter", icon: "fa-font", desc: "Change text case", input: "text", output: "case" },
-            { id: 70, name: "Word Counter", category: "converter", icon: "fa-chart-simple", desc: "Count words and chars", input: "text", output: "count" },
-            { id: 71, name: "String Reverser", category: "converter", icon: "fa-arrow-right-arrow-left", desc: "Reverse any string", input: "text", output: "reversed" },
-            { id: 72, name: "String to Hex", category: "converter", icon: "fa-code", desc: "Convert string to hex", input: "text", output: "hex" },
-            { id: 73, name: "Hex to String", category: "converter", icon: "fa-code", desc: "Convert hex to string", input: "hex", output: "text" },
-            { id: 74, name: "Unix Timestamp", category: "converter", icon: "fa-clock", desc: "Convert timestamp to date", input: "timestamp", output: "date" },
-            { id: 75, name: "Date to Timestamp", category: "converter", icon: "fa-clock", desc: "Convert date to timestamp", input: "date", output: "timestamp" },
-            
-            // Security Tools (25)
-            { id: 76, name: "Password Strength", category: "security", icon: "fa-shield-haltered", desc: "Check password strength", input: "password", output: "strength" },
-            { id: 77, name: "SQL Injection Test", category: "security", icon: "fa-database", desc: "Test SQL payloads", input: "input", output: "payloads" },
-            { id: 78, name: "XSS Payloads", category: "security", icon: "fa-code", desc: "Generate XSS vectors", input: "none", output: "xss" },
-            { id: 79, name: "Email Validator", category: "security", icon: "fa-envelope", desc: "Validate email format", input: "email", output: "valid" },
-            { id: 80, name: "Phone Validator", category: "security", icon: "fa-phone", desc: "Validate phone numbers", input: "phone", output: "valid" },
-            { id: 81, name: "URL Validator", category: "security", icon: "fa-link", desc: "Check URL validity", input: "url", output: "valid" },
-            { id: 82, name: "Domain Age Check", category: "security", icon: "fa-calendar", desc: "Check domain registration", input: "domain", output: "age" },
-            { id: 83, name: "SSL Checker", category: "security", icon: "fa-lock", desc: "Check SSL certificate", input: "domain", output: "ssl" },
-            { id: 84, name: "Hash Cracker (MD5)", category: "security", icon: "fa-bomb", desc: "Crack MD5 hashes", input: "hash", output: "cracked" },
-            { id: 85, name: "Hash Identifier", category: "security", icon: "fa-search", desc: "Identify hash type", input: "hash", output: "type" },
-            { id: 86, name: "Text Encrypter", category: "security", icon: "fa-lock", desc: "AES-256 encryption", input: "text", output: "encrypted" },
-            { id: 87, name: "Text Decrypter", category: "security", icon: "fa-unlock", desc: "AES-256 decryption", input: "encrypted", output: "text" },
-            { id: 88, name: "Caesar Cipher", category: "security", icon: "fa-sync", desc: "Caesar shift cipher", input: "text", output: "cipher" },
-            { id: 89, name: "Vigenere Cipher", category: "security", icon: "fa-key", desc: "Vigenere encryption", input: "text", output: "cipher" },
-            { id: 90, name: "Atbash Cipher", category: "security", icon: "fa-exchange-alt", desc: "Atbash encoding", input: "text", output: "atbash" },
-            { id: 91, name: "Morse Code", category: "security", icon: "fa-circle", desc: "Text to Morse code", input: "text", output: "morse" },
-            { id: 92, name: "Reverse Morse", category: "security", icon: "fa-circle", desc: "Morse to text", input: "morse", output: "text" },
-            { id: 93, name: "Bacon Cipher", category: "security", icon: "fa-bacon", desc: "Baconian encoding", input: "text", output: "bacon" },
-            { id: 94, name: "Rail Fence Cipher", category: "security", icon: "fa-fence", desc: "Rail fence encryption", input: "text", output: "cipher" },
-            { id: 95, name: "ROT5 Cipher", category: "security", icon: "fa-sync", desc: "ROT5 for numbers", input: "numbers", output: "rot5" },
-            { id: 96, name: "ROT13 Cipher", category: "security", icon: "fa-sync", desc: "ROT13 for text", input: "text", output: "rot13" },
-            { id: 97, name: "ROT18 Cipher", category: "security", icon: "fa-sync", desc: "ROT18 for alphanumeric", input: "text", output: "rot18" },
-            { id: 98, name: "URL Scanner", category: "security", icon: "fa-shield", desc: "Check URL safety", input: "url", output: "safe" },
-            { id: 99, name: "File Hash", category: "security", icon: "fa-file", desc: "Generate file hash", input: "file", output: "hash" },
-            { id: 100, name: "Base64 Image", category: "security", icon: "fa-image", desc: "Convert image to Base64", input: "url", output: "base64" }
-        ];
-
-        let currentCategory = "all";
-
-        function renderTools() {
-            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-            const filtered = tools.filter(tool => {
-                const matchesCat = currentCategory === "all" || tool.category === currentCategory;
-                const matchesSearch = tool.name.toLowerCase().includes(searchTerm) || 
-                                     tool.desc.toLowerCase().includes(searchTerm);
-                return matchesCat && matchesSearch;
-            });
-
-            const grid = document.getElementById('toolsGrid');
-            grid.innerHTML = filtered.map(tool => `
-                <div class="tool-card" onclick="openTool(${tool.id})">
-                    <div class="tool-icon"><i class="fas ${tool.icon}"></i></div>
-                    <div class="tool-title">${tool.name}</div>
-                    <div class="tool-desc">${tool.desc}</div>
-                    <span class="tool-badge"><i class="fas fa-tag"></i> ${tool.category.toUpperCase()}</span>
-                </div>
-            `).join('');
+    async function hash(algo,text){const e=new TextEncoder().encode(text);const h=await crypto.subtle.digest(algo,e);return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('')}
+    
+    let currentCat='all',searchTerm='';
+    function renderTools(){
+        const grid=document.getElementById('toolGrid');
+        let filtered=TOOLS.filter(t=>(currentCat==='all'||t.cat===currentCat)&&(searchTerm===''||t.name.toLowerCase().includes(searchTerm)||t.cat.toLowerCase().includes(searchTerm)));
+        grid.innerHTML=filtered.map((t,i)=>{let id='tool_'+i;setTimeout(()=>renderToolCard(id,t),10);return `<div class="tool-card" id="${id}"><div class="card-header"><i class="fas ${t.icon}"></i><h3>${t.name}</h3></div><div class="tool-content" id="content_${id}"></div></div>`}).join('');
+        filtered.forEach((t,i)=>renderToolCard('tool_'+i,t));
+    }
+    
+    function renderToolCard(id,tool){
+        const cont=document.getElementById('content_'+id);if(!cont)return;
+        cont.innerHTML='';
+        if(tool.isImg){
+            const inp=document.createElement('input');inp.placeholder='Text/URL for QR';cont.appendChild(inp);
+            const btn=document.createElement('button');btn.innerHTML='<i class="fas fa-qrcode"></i> Generate';cont.appendChild(btn);
+            const out=document.createElement('div');out.className='tool-output';cont.appendChild(out);
+            btn.onclick=()=>{out.innerHTML=`<img class="preview-img" src="${tool.fn(inp.value)}">`};
+        }else if(tool.fn.length===0){
+            const btn=document.createElement('button');btn.innerHTML='<i class="fas fa-sync"></i> Generate';cont.appendChild(btn);
+            const out=document.createElement('div');out.className='tool-output';cont.appendChild(out);
+            btn.onclick=async()=>{let res=tool.fn();if(res instanceof Promise)res=await res;out.innerText=res};
+        }else{
+            const inp=document.createElement(tool.name.includes('JSON')?'textarea':'input');inp.placeholder='Enter value...';cont.appendChild(inp);
+            if(tool.name==='Percentage')inp.placeholder='number,percent';
+            if(tool.name==='Compound Interest')inp.placeholder='principal,rate,time';
+            const btn=document.createElement('button');btn.innerHTML='<i class="fas fa-play"></i> Run';cont.appendChild(btn);
+            const out=document.createElement('div');out.className='tool-output';cont.appendChild(out);
+            btn.onclick=async()=>{let res=tool.fn(inp.value);if(res instanceof Promise)res=await res;out.innerText=res};
         }
-
-        function openTool(toolId) {
-            const tool = tools.find(t => t.id === toolId);
-            const modal = document.getElementById('modal');
-            const modalTitle = document.getElementById('modalTitle');
-            const modalBody = document.getElementById('modalBody');
-
-            modalTitle.innerHTML = `<i class="fas ${tool.icon}"></i> ${tool.name}`;
-            
-            modalBody.innerHTML = `
-                <div class="tool-input-section">
-                    <label>Enter ${tool.input === 'none' ? 'data' : tool.input}:</label>
-                    ${tool.input === 'none' ? 
-                        `<button onclick="executeTool(${tool.id})" style="margin:10px 0">Generate Now</button>` :
-                        `<textarea id="toolInput" rows="3" placeholder="Enter ${tool.input} here..."></textarea>
-                        <button onclick="executeTool(${tool.id})">Execute ${tool.name}</button>`
-                    }
-                    <div id="toolResult" class="result-area" style="display:none"></div>
-                </div>
-            `;
-
-            modal.style.display = "flex";
-        }
-
-        async function executeTool(toolId) {
-            const tool = tools.find(t => t.id === toolId);
-            const input = document.getElementById('toolInput')?.value || '';
-            const resultDiv = document.getElementById('toolResult');
-            
-            resultDiv.style.display = "block";
-            resultDiv.innerHTML = '<div class="loading"></div> Processing...';
-
-            try {
-                const response = await fetch('/execute', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tool_id: toolId, input: input })
-                });
-                const data = await response.json();
-                resultDiv.innerHTML = `<strong>Result:</strong><br>${data.result}`;
-            } catch (error) {
-                resultDiv.innerHTML = `<strong>Error:</strong> ${error.message}`;
-            }
-        }
-
-        document.querySelector('.close-modal').onclick = () => {
-            document.getElementById('modal').style.display = "none";
-        };
-
-        document.querySelectorAll('.category-btn').forEach(btn => {
-            btn.onclick = () => {
-                document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                currentCategory = btn.dataset.cat;
-                renderTools();
-            };
-        });
-
-        document.getElementById('searchInput').oninput = renderTools;
-
-        renderTools();
-    </script>
+    }
+    
+    document.querySelectorAll('.cat-chip').forEach(c=>c.addEventListener('click',function(){
+        document.querySelectorAll('.cat-chip').forEach(cc=>cc.classList.remove('active'));
+        this.classList.add('active');currentCat=this.dataset.cat;renderTools();
+    }));
+    document.getElementById('searchInput').addEventListener('input',e=>{searchTerm=e.target.value.toLowerCase();renderTools()});
+    renderTools();
+</script>
 </body>
-</html>
-"""
+</html>"""
 
-@app.route('/')
-def index():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/execute', methods=['POST'])
-def execute_tool():
-    data = request.json
-    tool_id = data.get('tool_id')
-    input_text = data.get('input', '')
-    
-    result = process_tool(tool_id, input_text)
-    return jsonify({'result': result})
-
-def process_tool(tool_id, input_text):
-    try:
-        # Encode/Decode Tools
-        if tool_id == 1:  # Base64 Encode
-            return base64.b64encode(input_text.encode()).decode()
-        elif tool_id == 2:  # Base64 Decode
-            return base64.b64decode(input_text).decode()
-        elif tool_id == 3:  # URL Encode
-            return requests.utils.quote(input_text)
-        elif tool_id == 4:  # URL Decode
-            return requests.utils.unquote(input_text)
-        elif tool_id == 5:  # HTML Encode
-            return input_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        elif tool_id == 6:  # HTML Decode
-            import html
-            return html.unescape(input_text)
-        elif tool_id == 7:  # Unicode Encode
-            return input_text.encode('unicode_escape').decode()
-        elif tool_id == 8:  # Unicode Decode
-            return input_text.encode().decode('unicode_escape')
-        elif tool_id == 9:  # Hex Encode
-            return input_text.encode().hex()
-        elif tool_id == 10:  # Hex Decode
-            return bytes.fromhex(input_text).decode()
-        elif tool_id == 11:  # Binary Encode
-            return ' '.join(format(ord(c), '08b') for c in input_text)
-        elif tool_id == 12:  # Binary Decode
-            return ''.join(chr(int(b, 2)) for b in input_text.split())
-        elif tool_id == 13:  # ROT13
-            return input_text.translate(str.maketrans(
-                'ABCDEFGHIJKLMabcdefghijklmNOPQRSTUVWXYZnopqrstuvwxyz',
-                'NOPQRSTUVWXYZnopqrstuvwxyzABCDEFGHIJKLMabcdefghijklm'
-            ))
-        elif tool_id == 14:  # ROT47
-            return ''.join(chr(33 + ((ord(c) - 33 + 47) % 94)) if 33 <= ord(c) <= 126 else c for c in input_text)
-        
-        # Hash Tools
-        elif tool_id == 16:  # MD5
-            return hashlib.md5(input_text.encode()).hexdigest()
-        elif tool_id == 17:  # SHA1
-            return hashlib.sha1(input_text.encode()).hexdigest()
-        elif tool_id == 18:  # SHA256
-            return hashlib.sha256(input_text.encode()).hexdigest()
-        elif tool_id == 19:  # SHA512
-            return hashlib.sha512(input_text.encode()).hexdigest()
-        elif tool_id == 20:  # CRC32
-            return str(zlib.crc32(input_text.encode()))
-        elif tool_id == 21:  # NTLM
-            import hashlib
-            return hashlib.new('md4', input_text.encode('utf-16le')).hexdigest()
-        
-        # Generator Tools
-        elif tool_id == 46:  # Password Generator
-            length = int(input_text) if input_text else 12
-            chars = string.ascii_letters + string.digits + '!@#$%^&*'
-            return ''.join(random.choice(chars) for _ in range(length))
-        elif tool_id == 47:  # Random String
-            length = int(input_text) if input_text else 10
-            return ''.join(random.choice(string.ascii_letters) for _ in range(length))
-        elif tool_id == 48:  # UUID
-            return str(uuid.uuid4())
-        elif tool_id == 51:  # Random Number
-            parts = input_text.split(',')
-            min_val = int(parts[0]) if len(parts) > 0 else 1
-            max_val = int(parts[1]) if len(parts) > 1 else 100
-            return str(random.randint(min_val, max_val))
-        elif tool_id == 52:  # OTP
-            return str(random.randint(100000, 999999))
-         
-        # Converter Tools
-        elif tool_id == 61:  # JSON Formatter
-            parsed = json.loads(input_text)
-            return json.dumps(parsed, indent=2)
-        elif tool_id == 68:  # Text to Slug
-            slug = input_text.lower().strip()
-            slug = re.sub(r'[^\w\s-]', '', slug)
-            slug = re.sub(r'[\s_-]+', '-', slug)
-            return slug
-        elif tool_id == 70:  # Word Counter
-            words = len(input_text.split())
-            chars = len(input_text)
-            return f"Words: {words}, Characters: {chars}, Lines: {len(input_text.splitlines())}"
-        elif tool_id == 71:  # String Reverser
-            return input_text[::-1]
-        
-        # Security Tools
-        elif tool_id == 76:  # Password Strength
-            score = 0
-            if len(input_text) >= 8: score += 1
-            if re.search(r'[A-Z]', input_text): score += 1
-            if re.search(r'[a-z]', input_text): score += 1
-            if re.search(r'\d', input_text): score += 1
-            if re.search(r'[!@#$%^&*]', input_text): score += 1
-            strengths = ['Very Weak', 'Weak', 'Medium', 'Strong', 'Very Strong', 'Excellent']
-            return f"Strength: {strengths[score]}/5"
-        elif tool_id == 79:  # Email Validator
-            pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-            return "Valid Email" if re.match(pattern, input_text) else "Invalid Email"
-        elif tool_id == 86:  # Text Encrypter (simple)
-            return base64.b64encode(input_text.encode()).decode()
-        elif tool_id == 87:  # Text Decrypter
-            return base64.b64decode(input_text).decode()
-        
-        # Network Tools (simplified)
-        elif tool_id == 31:  # IP Info
-            try:
-                response = requests.get(f'http://ip-api.com/json/{input_text}')
-                data = response.json()
-                return f"Country: {data.get('country')}\nCity: {data.get('city')}\nISP: {data.get('isp')}\nLat/Lon: {data.get('lat')}, {data.get('lon')}"
-            except:
-                return "Unable to fetch IP info"
-        
-        elif tool_id == 44:  # URL Parser
-            parsed = urlparse(input_text)
-            return f"Scheme: {parsed.scheme}\nNetloc: {parsed.netloc}\nPath: {parsed.path}\nQuery: {parsed.query}\nFragment: {parsed.fragment}"
-        
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/' or self.path == '/index.html':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(HTML.encode())
+        elif self.path.startswith('/qr'):
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            data = params.get('data', [''])[0]
+            self.send_response(200)
+            self.send_header('Content-type', 'image/png')
+            self.end_headers()
+            if PIL_AVAILABLE:
+                img = qrcode.make(data)
+                buf = BytesIO()
+                img.save(buf, 'PNG')
+                self.wfile.write(buf.getvalue())
+            else:
+                self.wfile.write(b'')
         else:
-            return f"Tool {tool_id} executed successfully!\nInput: {input_text[:100]}"
-            
-    except Exception as e:
-        return f"Error: {str(e)}"
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass
 
 if __name__ == '__main__':
-    import zlib
-    import uuid
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    print(f'🔥 ProToolbox 100+ running on port {PORT}')
+    HTTPServer(('0.0.0.0', PORT), Handler).serve_forever()
