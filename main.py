@@ -1,3 +1,4 @@
+import dns.resolver
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json, hashlib, base64, uuid, re, datetime, math, random, string, html, urllib.parse, os
 from io import BytesIO
